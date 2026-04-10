@@ -59,7 +59,8 @@ async function beginFromUserGesture() {
 }
 
 async function loadLevelData() {
-  const res = await fetch('./src/data/levels/level_01.json', { cache: 'no-store' });
+  const levelUrl = new URL('./src/data/levels/level_01.json', import.meta.url);
+  const res = await fetch(levelUrl, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error(`Failed to load level data: ${res.status}`);
   }
