@@ -4,7 +4,7 @@
  */
 import { gameEvents } from './EventEmitter.js';
 
-const IS_DEV_BUILD = import.meta.env.DEV;
+const IS_DEV_BUILD = Boolean(import.meta?.env?.DEV);
 
 const EMA_FACTOR = 0.15;
 const SWIPE_MIN_UP_PX = 40;
