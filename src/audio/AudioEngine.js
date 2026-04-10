@@ -5,8 +5,23 @@ import * as ResonanceAudioSdk from 'resonance-audio';
 import { formatCell } from '../engine/GridEngine.js';
 import { SpatialSource } from './SpatialSource.js';
 
-const { ResonanceAudio } = ResonanceAudioSdk;
 const roomPresetsUrl = new URL('../data/rooms/presets.json', import.meta.url);
+
+/**
+ * Resolve ResonanceAudio constructor across ESM/CJS wrapper variants.
+ * @returns {(new (ctx: AudioContext) => { output: AudioNode; setRoomProperties: Function; createSource: Function }) | null}
+ */
+function resolveResonanceAudioCtor() {
+  const sdk = /** @type {Record<string, unknown>} */ (ResonanceAudioSdk);
+  const direct = sdk.ResonanceAudio;
+  if (typeof direct === 'function') return /** @type {any} */ (direct);
+
+  const def = /** @type {Record<string, unknown> | undefined} */ (sdk.default);
+  if (def && typeof def.ResonanceAudio === 'function') return /** @type {any} */ (def.ResonanceAudio);
+  if (typeof sdk.default === 'function') return /** @type {any} */ (sdk.default);
+
+  return null;
+}
 
 /** Fixed vertical extent for all presets (m). Horizontal audio is unaffected per spec. */
 const ROOM_HEIGHT_M = 3;
@@ -71,8 +86,13 @@ export class AudioEngine {
     if (this._initialized) return;
     this._initialized = true;
 
-    audioContext = new AudioContext();
-    this.resonanceAudio = new ResonanceAudio(audioContext);
+    const AudioContextCtor = window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextCtor) return;
+    const ResonanceAudioCtor = resolveResonanceAudioCtor();
+    if (!ResonanceAudioCtor) return;
+
+    audioContext = new AudioContextCtor();
+    this.resonanceAudio = new ResonanceAudioCtor(audioContext);
     this.resonanceAudio.output.connect(audioContext.destination);
 
     this._roomPresetMap = null;

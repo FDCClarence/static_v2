@@ -49,14 +49,14 @@ export class SpatialSource {
     /** @type {{ x: number; y: number }} */
     this._gridPos = parseCell(cell);
 
-    this._splitter = new ChannelSplitterNode(audioContext, { numberOfOutputs: 2 });
+    this._splitter = audioContext.createChannelSplitter(2);
     this._gainL = audioContext.createGain();
     this._gainR = audioContext.createGain();
     this._filterL = audioContext.createBiquadFilter();
     this._filterR = audioContext.createBiquadFilter();
     this._delayL = audioContext.createDelay(1);
     this._delayR = audioContext.createDelay(1);
-    this._merger = new ChannelMergerNode(audioContext, { numberOfInputs: 2 });
+    this._merger = audioContext.createChannelMerger(2);
 
     for (const f of [this._filterL, this._filterR]) {
       f.type = 'lowpass';

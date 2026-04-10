@@ -80,11 +80,13 @@ export class DevOverlay {
     this.stop();
     this._canvas = canvas;
     this._syncCanvasBufferSize();
-    this._resizeObserver = new ResizeObserver(() => {
-      this._syncCanvasBufferSize();
-      this.draw();
-    });
-    this._resizeObserver.observe(canvas);
+    if (typeof ResizeObserver === 'function') {
+      this._resizeObserver = new ResizeObserver(() => {
+        this._syncCanvasBufferSize();
+        this.draw();
+      });
+      this._resizeObserver.observe(canvas);
+    }
     const loop = () => {
       if (!this._canvas) {
         this._raf = null;
