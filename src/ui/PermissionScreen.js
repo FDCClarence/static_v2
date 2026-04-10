@@ -115,20 +115,38 @@ export class PermissionScreen {
       /* still continue */
     }
 
-    let orientationDenied = false;
+    let motionDenied = false;
     try {
       if (
         typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function'
       ) {
-        const result = await DeviceOrientationEvent.requestPermission();
-        if (result !== 'granted') orientationDenied = true;
+        // true = include magnetometer; needed for compass / webkitCompassHeading (MDN).
+        let result;
+        try {
+          result = await DeviceOrientationEvent.requestPermission(true);
+        } catch {
+          result = await DeviceOrientationEvent.requestPermission();
+        }
+        if (result !== 'granted') motionDenied = true;
       }
     } catch {
       /* no permission string; still continue */
     }
 
-    if (orientationDenied) {
+    try {
+      if (
+        typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function'
+      ) {
+        const result = await DeviceMotionEvent.requestPermission();
+        if (result !== 'granted') motionDenied = true;
+      }
+    } catch {
+      /* still continue */
+    }
+
+    if (motionDenied) {
       this._button.textContent = 'Motion access denied — some features unavailable';
     }
 

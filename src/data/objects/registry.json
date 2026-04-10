@@ -1,1 +1,60 @@
-[]
+[
+  {
+    "id": "wall",
+    "walkable": false,
+    "interactable": false,
+    "devLabel": "█",
+    "sounds": {}
+  },
+  {
+    "id": "door-locked",
+    "walkable": false,
+    "interactable": true,
+    "devLabel": "DR",
+    "sounds": { "interact": "door-locked-rattle" }
+  },
+  {
+    "id": "door-unlocked",
+    "walkable": true,
+    "interactable": true,
+    "devLabel": "DR",
+    "sounds": { "interact": "door-open", "ambient": "door-creak-loop" }
+  },
+  {
+    "id": "table",
+    "walkable": false,
+    "interactable": false,
+    "devLabel": "TBL",
+    "sounds": { "bump": "furniture-thud" }
+  },
+  {
+    "id": "chair",
+    "walkable": false,
+    "interactable": false,
+    "devLabel": "CHR",
+    "sounds": { "bump": "chair-scrape" }
+  },
+  {
+    "id": "window",
+    "walkable": false,
+    "interactable": true,
+    "devLabel": "WIN",
+    "sounds": { "ambient": "wind-outside", "interact": "window-rattle" }
+  },
+  {
+    "id": "hole",
+    "walkable": true,
+    "interactable": false,
+    "devLabel": "HOL",
+    "sounds": { "ambient": "deep-hum" }
+  },
+  {
+    "id": "safe",
+    "walkable": false,
+    "interactable": true,
+    "devLabel": "SFE",
+    "sounds": { "interact": "metal-click" }
+  },
+  { "id": "key", "walkable": true, "interactable": true, "devLabel": "KEY", "sounds": { "ambient": "key-static" } },
+  { "id": "exit-locked", "walkable": false, "interactable": true, "devLabel": "EXT", "sounds": {} }
+]

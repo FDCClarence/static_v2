@@ -1,1 +1,34 @@
-[]
+[
+  {
+    "id": "stalker",
+    "speed": 1,
+    "hearingRadius": 6,
+    "behavior": "stalk",
+    "devLabel": "STK",
+    "sounds": { "ambient": "stalk-breathing", "chase": "stalk-rush" }
+  },
+  {
+    "id": "deceiver",
+    "speed": 1,
+    "hearingRadius": 8,
+    "behavior": "deceive",
+    "devLabel": "DCV",
+    "sounds": { "ambient": "deceiver-hum", "fake": "deceiver-fake-footstep" }
+  },
+  {
+    "id": "guard",
+    "speed": 2,
+    "hearingRadius": 4,
+    "behavior": "guard",
+    "devLabel": "GRD",
+    "sounds": { "ambient": "guard-shuffle", "alert": "guard-screech" }
+  },
+  {
+    "id": "ambusher",
+    "speed": 3,
+    "hearingRadius": 1,
+    "behavior": "ambush",
+    "devLabel": "AMB",
+    "sounds": { "ambient": null, "trigger": "ambush-burst" }
+  }
+]

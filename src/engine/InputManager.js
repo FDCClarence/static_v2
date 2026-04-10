@@ -4,15 +4,12 @@
  */
 import { gameEvents } from './EventEmitter.js';
 
+const IS_DEV_BUILD = import.meta.env.DEV;
+
 const EMA_FACTOR = 0.15;
 const SWIPE_MIN_UP_PX = 40;
 const SWIPE_MAX_HORIZONTAL_PX = 80;
 const SWIPE_MAX_MS = 400;
-const ORIENTATION_MIN_HZ = 30;
-const ORIENTATION_MAX_INTERVAL_MS = 1000 / ORIENTATION_MIN_HZ;
-/** Min samples before treating average interval as stable. */
-const ORIENTATION_RATE_SAMPLES = 4;
-
 const DIRECTION_ORDER = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
 /** @type {Record<string, { dx: number; dy: number }>} */
@@ -55,6 +52,11 @@ export class InputManager {
     this._needsMotionPermission = false;
     /** @type {boolean} */
     this._sensorsAttached = false;
+    /**
+     * iOS 13+: orientation listeners must be registered after permission; registering in init() can receive no data.
+     * @type {boolean}
+     */
+    this._deferSensorAttachUntilGesture = false;
 
     /** Latest sensor heading before smoothing (deg, 0–360). */
     this._rawHeading = 0;
@@ -67,25 +69,16 @@ export class InputManager {
     this._smoothSin = null;
     this._smoothCos = null;
 
-    /** @type {number[]} */
-    this._orientationIntervals = [];
-    /** @type {number | null} */
-    this._lastOrientationTime = null;
-    /** @type {boolean} */
-    this._useMotionIntegration = false;
-
-    /** @type {number | null} */
-    this._lastMotionTime = null;
-
     /** @type {{ x: number; y: number; t: number; id: number } | null} */
     this._activePointer = null;
 
     this._onDeviceOrientation = this._onDeviceOrientation.bind(this);
-    this._onDeviceMotion = this._onDeviceMotion.bind(this);
+    this._onDeviceOrientationAbsolute = this._onDeviceOrientationAbsolute.bind(this);
     this._onPointerDown = this._onPointerDown.bind(this);
     this._onPointerUp = this._onPointerUp.bind(this);
     this._onPointerCancel = this._onPointerCancel.bind(this);
     this._onInputRaf = this._onInputRaf.bind(this);
+    this._onDevHeadingKey = this._onDevHeadingKey.bind(this);
 
     /** @type {number | null} */
     this._inputRafId = null;
@@ -100,9 +93,38 @@ export class InputManager {
     window.addEventListener('pointerup', this._onPointerUp, { passive: true });
     window.addEventListener('pointercancel', this._onPointerCancel, { passive: true });
 
-    // DeviceOrientation permission is requested in PermissionScreen; listeners attach here.
-    this._attachSensors();
+    // iOS: listeners after PermissionScreen grant via attachSensorsAfterUserGesture() in main.js.
+    this._deferSensorAttachUntilGesture =
+      typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function';
+    if (!this._deferSensorAttachUntilGesture) {
+      this._attachSensors();
+    }
     this._startInputTick();
+
+    if (IS_DEV_BUILD) {
+      window.addEventListener('keydown', this._onDevHeadingKey);
+    }
+  }
+
+  /**
+   * Desktop / no-gyro: nudge compass heading (dev builds only).
+   * @param {KeyboardEvent} e
+   */
+  _onDevHeadingKey(e) {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    const t = e.target;
+    if (t instanceof HTMLElement) {
+      const tag = t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return;
+    }
+    let delta = 0;
+    if (e.key === 'ArrowLeft' || e.key === ',') delta = -15;
+    else if (e.key === 'ArrowRight' || e.key === '.') delta = 15;
+    else return;
+    e.preventDefault();
+    this._rawHeading = normalizeDeg(this._rawHeading + delta);
+    this._applySmoothing(this._rawHeading);
   }
 
   /**
@@ -113,10 +135,20 @@ export class InputManager {
   async requestPermission() {
     if (!this._needsMotionPermission) return 'granted';
     try {
-      return await DeviceMotionEvent.requestPermission();
+      const result = await DeviceMotionEvent.requestPermission();
+      if (result === 'granted') this.attachSensorsAfterUserGesture();
+      return result;
     } catch {
       return 'denied';
     }
+  }
+
+  /**
+   * Call after DeviceOrientation permission was granted (PermissionScreen) or motion granted on iOS.
+   * Safe to call multiple times; no-op when sensors already attached.
+   */
+  attachSensorsAfterUserGesture() {
+    this._attachSensors();
   }
 
   /** @returns {number} Raw heading in degrees (0–360). */
@@ -151,7 +183,12 @@ export class InputManager {
     if (this._sensorsAttached) return;
     this._sensorsAttached = true;
     window.addEventListener('deviceorientation', this._onDeviceOrientation, true);
-    window.addEventListener('devicemotion', this._onDeviceMotion, true);
+    // Do not gate on `in window` — some Chromium builds support the event without the handler property.
+    window.addEventListener(
+      'deviceorientationabsolute',
+      this._onDeviceOrientationAbsolute,
+      true,
+    );
   }
 
   _startInputTick() {
@@ -164,63 +201,44 @@ export class InputManager {
     this.emitter.emit('INPUT_TICK', { heading: normalizeDeg(this._smoothedHeading) });
   }
 
-  _recordOrientationInterval() {
-    const now = performance.now();
-    if (this._lastOrientationTime != null) {
-      const dt = now - this._lastOrientationTime;
-      this._orientationIntervals.push(dt);
-      if (this._orientationIntervals.length > 16) this._orientationIntervals.shift();
-      if (this._orientationIntervals.length >= ORIENTATION_RATE_SAMPLES) {
-        const sum = this._orientationIntervals.reduce((a, b) => a + b, 0);
-        const avg = sum / this._orientationIntervals.length;
-        if (avg > ORIENTATION_MAX_INTERVAL_MS) {
-          if (!this._useMotionIntegration) {
-            this._useMotionIntegration = true;
-            this._rawHeading = this._smoothedHeading;
-            this._lastMotionTime = null;
-          }
-        } else if (avg < ORIENTATION_MAX_INTERVAL_MS * 0.85 && this._useMotionIntegration) {
-          this._useMotionIntegration = false;
-          this._lastMotionTime = null;
-        }
-      }
+  /**
+   * @param {DeviceOrientationEvent} e
+   * @returns {number | null}
+   */
+  _headingFromOrientationEvent(e) {
+    const oe = /** @type {DeviceOrientationEvent & { webkitCompassHeading?: number }} */ (e);
+    if (typeof oe.webkitCompassHeading === 'number' && Number.isFinite(oe.webkitCompassHeading)) {
+      return normalizeDeg(oe.webkitCompassHeading);
     }
-    this._lastOrientationTime = now;
+    if (e.alpha != null && Number.isFinite(e.alpha)) {
+      return normalizeDeg(e.alpha);
+    }
+    return null;
+  }
+
+  /**
+   * Apply compass/yaw from an orientation event. Always preferred over motion integration
+   * when any heading can be read (fixes iOS + browsers that omit webkitCompassHeading).
+   * @param {DeviceOrientationEvent} e
+   */
+  _applyOrientationHeading(e) {
+    const headingDeg = this._headingFromOrientationEvent(e);
+    if (headingDeg == null) return;
+
+    this._rawHeading = headingDeg;
+    this._applySmoothing(this._rawHeading);
   }
 
   /** @param {DeviceOrientationEvent} e */
   _onDeviceOrientation(e) {
     if (!this._sensorsAttached) return;
-    this._recordOrientationInterval();
-
-    if (this._useMotionIntegration) return;
-
-    if (e.alpha == null || Number.isNaN(e.alpha)) return;
-
-    this._rawHeading = normalizeDeg(e.alpha);
-    this._applySmoothing(this._rawHeading);
+    this._applyOrientationHeading(e);
   }
 
-  /** @param {DeviceMotionEvent} e */
-  _onDeviceMotion(e) {
-    if (!this._sensorsAttached || !this._useMotionIntegration) return;
-
-    const t =
-      typeof e.timeStamp === 'number' && e.timeStamp > 0 ? e.timeStamp : performance.now();
-    const rate = e.rotationRate?.alpha;
-    if (rate == null || Number.isNaN(rate)) return;
-
-    if (this._lastMotionTime == null) {
-      this._lastMotionTime = t;
-      return;
-    }
-
-    const dt = (t - this._lastMotionTime) / 1000;
-    this._lastMotionTime = t;
-    if (dt <= 0 || dt > 0.5) return;
-
-    this._rawHeading = normalizeDeg(this._rawHeading + rate * dt);
-    this._applySmoothing(this._rawHeading);
+  /** @param {DeviceOrientationEvent} e */
+  _onDeviceOrientationAbsolute(e) {
+    if (!this._sensorsAttached) return;
+    this._applyOrientationHeading(e);
   }
 
   /** @param {number} rawDeg */

@@ -2,7 +2,8 @@ import { audioEngine, audioContext } from './src/audio/AudioEngine.js';
 import { audioEventBus } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
 import './src/audio/ReverbZones.js';
-import './src/engine/GridEngine.js';
+import { gridEngine, parseCell } from './src/engine/GridEngine.js';
+import levelData from './src/data/levels/level_01.json' assert { type: 'json' };
 import './src/engine/GameLoop.js';
 import './src/engine/EventEmitter.js';
 import { InputManager } from './src/engine/InputManager.js';
@@ -27,11 +28,16 @@ void audioEventBus.init({ inputManager });
 const landingPage = new LandingPage();
 landingPage.onStart = () => {
   landingPage.hide();
+  gameScreen.show();
+  gridEngine.loadLevel(levelData);
+  const keyCell = parseCell('E2');
+  audioEngine.createStaticSource(keyCell.x, keyCell.y);
   void beginFromUserGesture();
 };
 
 const permissionScreen = new PermissionScreen();
 permissionScreen.onGranted = () => {
+  inputManager.attachSensorsAfterUserGesture();
   permissionScreen.hide();
   gameScreen.show();
   landingPage.show();

@@ -2,21 +2,29 @@
  * Resonance Audio scene + listener heading (deg) for SpatialSource panning.
  */
 import * as ResonanceAudioSdk from 'resonance-audio';
+import roomPresetsUrl from '../data/rooms/presets.json?url';
+import { formatCell } from '../engine/GridEngine.js';
+import { SpatialSource } from './SpatialSource.js';
 
 const { ResonanceAudio } = ResonanceAudioSdk;
 
 /** Fixed vertical extent for all presets (m). Horizontal audio is unaffected per spec. */
 const ROOM_HEIGHT_M = 3;
 
-/** Resonance SDK material ids (hyphenated). */
-const M = {
+/**
+ * Level JSON / presets.json material keys → resonance-audio SDK material ids.
+ * @type {Record<string, string>}
+ */
+const MATERIAL_NAME_TO_RESONANCE = {
+  transparent: 'transparent',
   brickBare: 'brick-bare',
   brickPainted: 'brick-painted',
   parquetOnConcrete: 'parquet-on-concrete',
-  /** Rough concrete: closest match in resonance-audio. */
   concreteRough: 'concrete-block-coarse',
-  /** Smooth concrete: polished concrete / tile. */
   concreteSmooth: 'polished-concrete-or-tile',
+  wood: 'wood-panel',
+  metal: 'metal',
+  glass: 'glass-thin',
 };
 
 /** @type {AudioContext | null} */
@@ -27,51 +35,22 @@ function normalizeDeg(deg) {
   return ((deg % 360) + 360) % 360;
 }
 
-/** @param {string} mat */
-function allSurfaces(mat) {
+/**
+ * @param {Record<string, unknown>} mats
+ * @returns {import('resonance-audio').Utils.RoomMaterials}
+ */
+function jsonMaterialsToResonance(mats) {
+  const floor = mats.floor;
+  const ceiling = mats.ceiling;
   return {
-    left: mat,
-    right: mat,
-    front: mat,
-    back: mat,
-    up: mat,
-    down: mat,
+    left: MATERIAL_NAME_TO_RESONANCE[/** @type {string} */ (mats.left)] ?? 'transparent',
+    right: MATERIAL_NAME_TO_RESONANCE[/** @type {string} */ (mats.right)] ?? 'transparent',
+    front: MATERIAL_NAME_TO_RESONANCE[/** @type {string} */ (mats.front)] ?? 'transparent',
+    back: MATERIAL_NAME_TO_RESONANCE[/** @type {string} */ (mats.back)] ?? 'transparent',
+    down: MATERIAL_NAME_TO_RESONANCE[/** @type {string} */ (floor)] ?? 'transparent',
+    up: MATERIAL_NAME_TO_RESONANCE[/** @type {string} */ (ceiling)] ?? 'transparent',
   };
 }
-
-/** Preset name → dimensions (m) + materials for setRoomProperties. */
-const ROOM_PRESETS = {
-  'small-room': {
-    dimensions: { width: 4, height: ROOM_HEIGHT_M, depth: 4 },
-    materials: {
-      left: M.brickBare,
-      right: M.brickBare,
-      front: M.brickBare,
-      back: M.brickBare,
-      up: M.brickBare,
-      down: M.parquetOnConcrete,
-    },
-  },
-  corridor: {
-    dimensions: { width: 2, height: ROOM_HEIGHT_M, depth: 12 },
-    materials: allSurfaces(M.concreteRough),
-  },
-  'large-hall': {
-    dimensions: { width: 12, height: ROOM_HEIGHT_M, depth: 20 },
-    materials: allSurfaces(M.concreteSmooth),
-  },
-  basement: {
-    dimensions: { width: 5, height: ROOM_HEIGHT_M, depth: 6 },
-    materials: {
-      left: M.brickPainted,
-      right: M.brickPainted,
-      front: M.brickPainted,
-      back: M.brickPainted,
-      up: M.brickPainted,
-      down: M.concreteRough,
-    },
-  },
-};
 
 export class AudioEngine {
   constructor() {
@@ -81,6 +60,11 @@ export class AudioEngine {
     this.headingDeg = 0;
     /** @type {boolean} */
     this._initialized = false;
+    /** `null` until fetch settles (success or failure). */
+    /** @type {Map<string, Record<string, unknown>> | null} */
+    this._roomPresetMap = null;
+    /** @type {string | null} */
+    this._pendingRoomPreset = null;
   }
 
   init() {
@@ -90,6 +74,31 @@ export class AudioEngine {
     audioContext = new AudioContext();
     this.resonanceAudio = new ResonanceAudio(audioContext);
     this.resonanceAudio.output.connect(audioContext.destination);
+
+    this._roomPresetMap = null;
+    this._pendingRoomPreset = null;
+    void fetch(roomPresetsUrl)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        const map = new Map();
+        if (Array.isArray(list)) {
+          for (const p of list) {
+            if (p && typeof p === 'object' && typeof p.id === 'string') {
+              map.set(p.id, /** @type {Record<string, unknown>} */ (p));
+            }
+          }
+        }
+        this._roomPresetMap = map;
+        const pending = this._pendingRoomPreset;
+        this._pendingRoomPreset = null;
+        if (pending) this.setRoomPreset(pending);
+      })
+      .catch(() => {
+        this._roomPresetMap = new Map();
+        const pending = this._pendingRoomPreset;
+        this._pendingRoomPreset = null;
+        if (pending) this.setRoomPreset(pending);
+      });
   }
 
   /**
@@ -100,14 +109,95 @@ export class AudioEngine {
   }
 
   /**
-   * @param {string} name
+   * @param {string} name Preset id (matches level `reverbPreset` and entries in presets.json).
    */
   setRoomPreset(name) {
-    const preset = ROOM_PRESETS[name];
-    if (!preset || !this.resonanceAudio) return;
-    this.resonanceAudio.setRoomProperties(preset.dimensions, preset.materials);
+    const id = String(name || '');
+    if (!id || !this.resonanceAudio) return;
+
+    if (this._roomPresetMap === null) {
+      this._pendingRoomPreset = id;
+      return;
+    }
+
+    const raw = this._roomPresetMap.get(id);
+    if (!raw || typeof raw !== 'object') return;
+
+    const dims = raw.dimensions;
+    const mats = raw.materials;
+    if (!dims || typeof dims !== 'object' || !mats || typeof mats !== 'object') return;
+
+    const w = Number(/** @type {{ width?: unknown }} */ (dims).width);
+    const d = Number(/** @type {{ depth?: unknown }} */ (dims).depth);
+    if (!Number.isFinite(w) || !Number.isFinite(d)) return;
+
+    const dimensions = { width: w, height: ROOM_HEIGHT_M, depth: d };
+    const materials = jsonMaterialsToResonance(/** @type {Record<string, unknown>} */ (mats));
+    this.resonanceAudio.setRoomProperties(dimensions, materials);
   }
 
+  /**
+   * Key-style static / radio noise at a grid cell, spatialized. Loops until {@link SpatialSource#stop}.
+   * @param {number} gridX
+   * @param {number} gridY
+   * @returns {SpatialSource | null}
+   */
+  createStaticSource(gridX, gridY) {
+    const ctx = audioContext;
+    const ra = this.resonanceAudio;
+    if (!ctx || !ra) return null;
+
+    const osc = ctx.createOscillator();
+    /** @type {AudioNode} */
+    let sourceTail = osc;
+    try {
+      osc.type = 'white';
+    } catch {
+      /* invalid type */
+    }
+    if (osc.type !== 'white') {
+      osc.type = 'sawtooth';
+      osc.frequency.value = 80;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1800;
+      bp.Q.value = 0.5;
+      osc.connect(bp);
+      sourceTail = bp;
+    }
+
+    const gain = ctx.createGain();
+    gain.gain.value = 0.15;
+    sourceTail.connect(gain);
+
+    const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
+    const spatial = new SpatialSource({
+      audioContext: ctx,
+      resonanceAudio: ra,
+      cell: formatCell(gridX, gridY),
+      soundBuffer: silent,
+      loop: false,
+      baseVolume: 1,
+    });
+
+    const dispose = () => {
+      try {
+        osc.stop();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        gain.disconnect();
+      } catch {
+        /* */
+      }
+    };
+
+    spatial.attachStream(gain, dispose);
+    osc.start(0);
+
+    return spatial;
+  }
 }
 
 export const audioEngine = new AudioEngine();

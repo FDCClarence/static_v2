@@ -1,5 +1,7 @@
 /** Full-screen black game surface; optional dev grid overlay (dev builds only). */
 
+import { gameEvents } from '../engine/EventEmitter.js';
+import { gridEngine } from '../engine/GridEngine.js';
 import * as DevOverlay from './DevOverlay.js';
 
 const STYLE_ID = 'game-screen-styles';
@@ -25,8 +27,20 @@ export class GameScreen {
 
     this._onResize = this._onResize.bind(this);
     this._onDevToggle = this._onDevToggle.bind(this);
+    this._onGridStateChanged = this._onGridStateChanged.bind(this);
+
+    gameEvents.on('GRID_STATE_CHANGED', this._onGridStateChanged);
 
     this.render();
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onGridStateChanged(detail) {
+    if (!detail || typeof detail !== 'object') return;
+    const d = /** @type {Record<string, unknown>} */ (detail);
+    this.updateDevOverlay(d.grid, d.playerPos, d.facingDirection, d.entities);
   }
 
   render() {
@@ -248,6 +262,7 @@ export class GameScreen {
     if (on) {
       DevOverlay.start(this._devCanvas);
       DevOverlay.resize();
+      gridEngine.republishGridState();
     } else {
       DevOverlay.stop();
     }
@@ -302,7 +317,7 @@ export class GameScreen {
    * @param {unknown} entities
    */
   updateDevOverlay(gridState, playerPos, facingDirection, entities) {
-    if (!IS_DEV || !this._devModeOn) return;
+    if (!IS_DEV) return;
     DevOverlay.update(gridState, playerPos, facingDirection, entities);
   }
 }

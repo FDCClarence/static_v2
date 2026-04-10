@@ -79,6 +79,8 @@ export class SpatialSource {
 
     /** @type {AudioBufferSourceNode | null} */
     this._bufferSource = null;
+    /** @type {(() => void) | null} Cleanup for {@link attachStream} (stop nodes, disconnect). */
+    this._streamDispose = null;
     /** @type {(() => void) | null} Fired when a non-looping buffer finishes. */
     this.onPlaybackEnded = null;
 
@@ -161,7 +163,18 @@ export class SpatialSource {
 
   /** @returns {boolean} */
   get playing() {
-    return this._bufferSource != null;
+    return this._bufferSource != null || this._streamDispose != null;
+  }
+
+  /**
+   * Feed a continuous AudioNode into the spatial chain (oscillators, etc.). Stops any buffer playback.
+   * @param {AudioNode} inputNode Last node before the spatial splitter (e.g. output of a GainNode).
+   * @param {() => void} dispose Stops/disconnects the streaming graph when {@link stop} runs.
+   */
+  attachStream(inputNode, dispose) {
+    this.stop();
+    this._streamDispose = dispose;
+    inputNode.connect(this._splitter);
   }
 
   play() {
@@ -181,6 +194,10 @@ export class SpatialSource {
   }
 
   stop() {
+    if (this._streamDispose) {
+      this._streamDispose();
+      this._streamDispose = null;
+    }
     if (!this._bufferSource) return;
     try {
       this._bufferSource.stop();

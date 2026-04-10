@@ -1,9 +1,18 @@
 /** Live grid debug view (dev only). */
 
+import { gameEvents } from '../engine/EventEmitter.js';
+
+const IS_DEV_BUILD = import.meta.env.DEV;
+
 const HUD_H = 32;
 const PAD = 40;
 const HUD_PAD_X = 12;
 const LABEL_MARGIN = 24;
+
+/** @param {number} deg */
+function normalizeDeg(deg) {
+  return ((deg % 360) + 360) % 360;
+}
 
 /** @type {Record<string, number>} */
 const FACING_TO_RAD = {
@@ -41,6 +50,27 @@ export class DevOverlay {
     this._facingDirection = 'N';
     /** @type {EntityInput[]} */
     this._entities = [];
+    /** Smoothed compass heading (deg) from {@link gameEvents} INPUT_TICK for arrow rotation. */
+    this._gyroHeadingDeg = 0;
+    /** @type {boolean} */
+    this._hasGyroHeading = false;
+
+    this._onInputTick = this._onInputTick.bind(this);
+
+    if (IS_DEV_BUILD) {
+      gameEvents.on('INPUT_TICK', this._onInputTick);
+    }
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onInputTick(detail) {
+    if (!detail || typeof detail !== 'object') return;
+    const h = /** @type {{ heading?: unknown }} */ (detail).heading;
+    if (typeof h !== 'number' || !Number.isFinite(h)) return;
+    this._gyroHeadingDeg = normalizeDeg(h);
+    this._hasGyroHeading = true;
   }
 
   /**
@@ -76,10 +106,6 @@ export class DevOverlay {
     }
     this._resizeObserver = null;
     this._canvas = null;
-    this._gridState = null;
-    this._playerPos = null;
-    this._facingDirection = 'N';
-    this._entities = [];
   }
 
   /**
@@ -231,7 +257,9 @@ export class DevOverlay {
         ctx.restore();
 
         if (isPlayer) {
-          const rad = FACING_TO_RAD[this._facingDirection] ?? 0;
+          const rad = this._hasGyroHeading
+            ? (this._gyroHeadingDeg * Math.PI) / 180
+            : FACING_TO_RAD[this._facingDirection] ?? 0;
           const inset = 6;
           const cx = cellSize / 2;
           const cy = cellSize / 2;
@@ -276,7 +304,7 @@ export class DevOverlay {
       (this._gridState && typeof this._gridState.state === 'string' && this._gridState.state) ||
       'PLAYING';
 
-    const line = `FACING: ${this._facingDirection}  |  PLAYER: ${playerStr}  |  CREATURES: ${creatureCount}  |  STATE: ${stateStr}`;
+    const line = `PLAYER: ${playerStr}  |  FACING: ${this._facingDirection}  |  CREATURES: ${creatureCount}  |  STATE: ${stateStr}`;
 
     ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
     ctx.fillStyle = '#fff';

@@ -1,0 +1,54 @@
+[
+  {
+    "id": "small-room",
+    "devLabel": "Room: small-room",
+    "dimensions": { "width": 4, "depth": 4 },
+    "materials": {
+      "left": "brickBare",
+      "right": "brickBare",
+      "front": "brickBare",
+      "back": "brickBare",
+      "floor": "parquetOnConcrete",
+      "ceiling": "brickBare"
+    }
+  },
+  {
+    "id": "corridor",
+    "devLabel": "Room: corridor",
+    "dimensions": { "width": 2, "depth": 12 },
+    "materials": {
+      "left": "concreteRough",
+      "right": "concreteRough",
+      "front": "concreteRough",
+      "back": "concreteRough",
+      "floor": "concreteRough",
+      "ceiling": "concreteRough"
+    }
+  },
+  {
+    "id": "large-hall",
+    "devLabel": "Room: large-hall",
+    "dimensions": { "width": 12, "depth": 20 },
+    "materials": {
+      "left": "concreteSmooth",
+      "right": "concreteSmooth",
+      "front": "concreteSmooth",
+      "back": "concreteSmooth",
+      "floor": "concreteSmooth",
+      "ceiling": "concreteSmooth"
+    }
+  },
+  {
+    "id": "basement",
+    "devLabel": "Room: basement",
+    "dimensions": { "width": 5, "depth": 6 },
+    "materials": {
+      "left": "brickPainted",
+      "right": "brickPainted",
+      "front": "brickPainted",
+      "back": "brickPainted",
+      "floor": "concreteRough",
+      "ceiling": "brickPainted"
+    }
+  }
+]
