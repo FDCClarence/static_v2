@@ -23,6 +23,7 @@ const LEVEL_IDS = ['level_01'];
 const levelDataByIdPromise = loadAllLevelData(LEVEL_IDS);
 let currentLevelIndex = 0;
 let activeKeyStaticSource = null;
+let transferredStaticToDoorOnPickup = false;
 
 const gameScreen = new GameScreen();
 const gameOverScreen = new GameOverScreen();
@@ -64,6 +65,10 @@ gameEvents.on('LEVEL_EXITED', async () => {
 });
 
 gameEvents.on('KEY_COLLECTED', () => {
+  if (transferredStaticToDoorOnPickup) {
+    transferredStaticToDoorOnPickup = false;
+    return;
+  }
   audioEngine.removeStaticSource(activeKeyStaticSource);
   activeKeyStaticSource = null;
 });
@@ -72,6 +77,7 @@ gameEvents.on('DOOR_UNLOCKED', (detail) => {
   if (!detail || typeof detail !== 'object') return;
   const d = /** @type {{ x?: unknown; y?: unknown }} */ (detail);
   if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
+  transferredStaticToDoorOnPickup = true;
   audioEngine.removeStaticSource(activeKeyStaticSource);
   activeKeyStaticSource = audioEngine.createStaticSource(d.x, d.y);
 });
@@ -127,6 +133,7 @@ async function startLevel(levelIndex) {
   const levelData = allLevels[levelId];
   if (!levelData) return;
   audioEngine.clearStaticSources();
+  transferredStaticToDoorOnPickup = false;
   activeKeyStaticSource = null;
   gridEngine.loadLevel(levelData);
 

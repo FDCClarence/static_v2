@@ -143,7 +143,8 @@ export class AudioEngine {
     const mx = Number(gridPos.x) * 1.5;
     const mz = Number(gridPos.y) * 1.5;
     const headingRad = (this.headingDeg * Math.PI) / 180;
-    const fx = Math.sin(headingRad);
+    // Match game heading convention to Resonance Audio handedness.
+    const fx = -Math.sin(headingRad);
     const fz = -Math.cos(headingRad);
 
     try {
