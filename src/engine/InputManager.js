@@ -125,9 +125,15 @@ export class InputManager {
       const tag = t.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return;
     }
+    const key = e.key.toLowerCase();
+    if (key === 'w') {
+      e.preventDefault();
+      this.emitter.emit('MOVE_INTENT', { facingDirection: this._snappedDirection });
+      return;
+    }
     let delta = 0;
-    if (e.key === 'ArrowLeft' || e.key === ',') delta = -15;
-    else if (e.key === 'ArrowRight' || e.key === '.') delta = 15;
+    if (e.key === 'ArrowLeft' || e.key === ',' || key === 'a') delta = -15;
+    else if (e.key === 'ArrowRight' || e.key === '.' || key === 'd') delta = 15;
     else return;
     e.preventDefault();
     this._rawHeading = normalizeDeg(this._rawHeading + delta);
