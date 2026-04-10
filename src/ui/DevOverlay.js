@@ -2,7 +2,7 @@
 
 import { gameEvents } from '../engine/EventEmitter.js';
 
-const IS_DEV_BUILD = import.meta.env.DEV;
+const IS_DEV_BUILD = Boolean(import.meta?.env?.DEV);
 
 const HUD_H = 32;
 const PAD = 40;

@@ -5,7 +5,7 @@ import { gridEngine } from '../engine/GridEngine.js';
 import * as DevOverlay from './DevOverlay.js';
 
 const STYLE_ID = 'game-screen-styles';
-const IS_DEV = import.meta.env.DEV;
+const IS_DEV = Boolean(import.meta?.env?.DEV);
 
 export class GameScreen {
   constructor() {
@@ -77,7 +77,7 @@ export class GameScreen {
           touch-action: none;
         }
       `;
-      if (import.meta.env.DEV) {
+      if (IS_DEV) {
         css += `
         .game-screen--dev .game-screen__stage {
           top: 44px;
