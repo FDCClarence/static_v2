@@ -457,7 +457,7 @@ export class AudioEventBus {
 
   _onLevelExited() {
     const sfx = this._sfxBuffers.openDoorWithKey;
-    if (sfx) this._playSfx(sfx);
+    if (sfx) this._playSfx(sfx, { gain: 1.5, swapStereo: true });
   }
 
   /** Landing-page BEGIN confirmation cue. */
@@ -486,7 +486,7 @@ export class AudioEventBus {
 
   /**
    * @param {AudioBuffer} buffer
-   * @param {{ gain?: number; playbackRate?: number }} [opts]
+   * @param {{ gain?: number; playbackRate?: number; swapStereo?: boolean }} [opts]
    */
   _playSfx(buffer, opts = {}) {
     const ctx = audioContext;
@@ -496,7 +496,16 @@ export class AudioEventBus {
     src.playbackRate.value = typeof opts.playbackRate === 'number' ? opts.playbackRate : 1;
     const gain = ctx.createGain();
     gain.gain.value = typeof opts.gain === 'number' ? opts.gain : 1;
-    src.connect(gain);
+    if (opts.swapStereo) {
+      const splitter = ctx.createChannelSplitter(2);
+      const merger = ctx.createChannelMerger(2);
+      src.connect(splitter);
+      splitter.connect(merger, 0, 1);
+      splitter.connect(merger, 1, 0);
+      merger.connect(gain);
+    } else {
+      src.connect(gain);
+    }
     if (this._masterGain) gain.connect(this._masterGain);
     else gain.connect(ctx.destination);
     void ctx.resume().then(() => {
