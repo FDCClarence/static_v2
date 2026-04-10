@@ -221,6 +221,10 @@ export class AudioEventBus {
     this._landingMusicSource = null;
     /** @type {GainNode | null} */
     this._landingMusicGain = null;
+    /** @type {boolean} */
+    this._wantBgMusic = false;
+    /** @type {boolean} */
+    this._wantLandingMusic = false;
 
     /** @type {boolean} */
     this._deathInProgress = false;
@@ -321,6 +325,10 @@ export class AudioEventBus {
         this._sfxBuffers[key] = await decodeUrl(ctx, sfxUrl(sfxBase, file));
       }),
     );
+
+    // On slower networks (e.g. GH Pages), music start may be requested before large files decode.
+    if (this._wantBgMusic) this.startBgMusic();
+    if (this._wantLandingMusic) this.startLandingMusic();
   }
 
   _createOneShotSources() {
@@ -671,6 +679,8 @@ export class AudioEventBus {
   }
 
   startBgMusic() {
+    this._wantBgMusic = true;
+    this._wantLandingMusic = false;
     const ctx = audioContext;
     const buffer = this._sfxBuffers.backroomsBgMusic;
     if (!ctx || !buffer || this._bgMusicSource) return;
@@ -707,6 +717,7 @@ export class AudioEventBus {
   }
 
   stopBgMusic() {
+    this._wantBgMusic = false;
     const ctx = audioContext;
     const source = this._bgMusicSource;
     const gain = this._bgMusicGain;
@@ -731,6 +742,8 @@ export class AudioEventBus {
   }
 
   startLandingMusic() {
+    this._wantLandingMusic = true;
+    this._wantBgMusic = false;
     const ctx = audioContext;
     const buffer = this._sfxBuffers.landingPageMusic;
     if (!ctx || !buffer || this._landingMusicSource) return;
@@ -767,6 +780,7 @@ export class AudioEventBus {
   }
 
   stopLandingMusic() {
+    this._wantLandingMusic = false;
     const ctx = audioContext;
     const source = this._landingMusicSource;
     const gain = this._landingMusicGain;
