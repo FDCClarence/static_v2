@@ -1,4 +1,4 @@
-import { audioEngine, audioContext } from './src/audio/AudioEngine.js';
+import { audioEngine } from './src/audio/AudioEngine.js';
 import { audioEventBus } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
 import './src/audio/ReverbZones.js';
@@ -35,7 +35,6 @@ landingPage.onStart = async () => {
   gridEngine.loadLevel(levelData);
   const keyCell = parseCell('E2');
   audioEngine.createStaticSource(keyCell.x, keyCell.y);
-  void beginFromUserGesture();
 };
 
 const permissionScreen = new PermissionScreen();
@@ -53,11 +52,6 @@ function resizeCanvas() {
 
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
-
-async function beginFromUserGesture() {
-  await inputManager.requestPermission();
-  await audioContext?.resume().catch(() => {});
-}
 
 async function loadLevelData() {
   const levelUrl = new URL('./src/data/levels/level_01.json', import.meta.url);
