@@ -20,19 +20,48 @@ function assetUrl(file) {
   return new URL(`../../audio/${file}`, import.meta.url).href;
 }
 
+const SFX_BASE_CANDIDATES = ['assets/sfx', 'public/assets/sfx'];
+let _resolvedSfxBase = null;
+
 /**
- * In proper Vite builds, files from /public are served from /assets/... .
- * Some GH Pages setups may serve source files directly, requiring /public/assets/... .
- * Try both to keep audio loading in either environment.
- * @param {string} file
- * @returns {string[]}
+ * Pick one working public SFX base path so we avoid repeated 404 noise.
+ * @returns {Promise<string>}
  */
-function publicSfxUrls(file) {
-  if (typeof window === 'undefined') return [`assets/sfx/${file}`, `public/assets/sfx/${file}`];
-  return [
-    new URL(`assets/sfx/${file}`, document.baseURI).href,
-    new URL(`public/assets/sfx/${file}`, document.baseURI).href,
-  ];
+async function resolveSfxBase() {
+  if (typeof window === 'undefined') return SFX_BASE_CANDIDATES[0];
+  if (_resolvedSfxBase) return _resolvedSfxBase;
+
+  // If page bootstraps directly from main.js, it's likely serving source files.
+  const moduleScript = document.querySelector('script[type="module"][src]');
+  const scriptSrc = moduleScript?.getAttribute('src') ?? '';
+  const candidates =
+    scriptSrc.includes('main.js') ? ['public/assets/sfx', 'assets/sfx'] : SFX_BASE_CANDIDATES;
+
+  const probeFile = 'walking-wood.mp3';
+  for (const base of candidates) {
+    const url = new URL(`${base}/${probeFile}`, document.baseURI).href;
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      if (res.ok) {
+        _resolvedSfxBase = base;
+        return base;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  _resolvedSfxBase = candidates[0];
+  return _resolvedSfxBase;
+}
+
+/**
+ * @param {string} base
+ * @param {string} file
+ */
+function sfxUrl(base, file) {
+  if (typeof window === 'undefined') return `${base}/${file}`;
+  return new URL(`${base}/${file}`, document.baseURI).href;
 }
 
 /** Optional decode URLs (add files under /public/audio/). */
@@ -55,14 +84,14 @@ const URLS = {
     default: assetUrl('creature_default.wav'),
   },
 };
-const SFX_URLS = {
-  walkingWood: publicSfxUrls('walking-wood.mp3'),
-  keyJingle: publicSfxUrls('key-jingle.mp3'),
-  attemptOpenLockedDoor: publicSfxUrls('attempt-open-locked-door.mp3'),
-  openDoorWithKey: publicSfxUrls('open-door-with-key.mp3'),
-  wallBump: publicSfxUrls('wall-bump.mp3'),
-  backroomsBgMusic: publicSfxUrls('backrooms-bg-music.mp3'),
-  landingPageMusic: publicSfxUrls('landing-page-music.mp3'),
+const SFX_FILES = {
+  walkingWood: 'walking-wood.mp3',
+  keyJingle: 'key-jingle.mp3',
+  attemptOpenLockedDoor: 'attempt-open-locked-door.mp3',
+  openDoorWithKey: 'open-door-with-key.mp3',
+  wallBump: 'wall-bump.mp3',
+  backroomsBgMusic: 'backrooms-bg-music.mp3',
+  landingPageMusic: 'landing-page-music.mp3',
 };
 const MUSIC_FADE_S = 0.8;
 
@@ -134,20 +163,6 @@ async function decodeUrl(ctx, url) {
   } catch {
     return null;
   }
-}
-
-/**
- * @param {AudioContext} ctx
- * @param {string | string[]} urls
- * @returns {Promise<AudioBuffer | null>}
- */
-async function decodeFromCandidates(ctx, urls) {
-  const candidates = Array.isArray(urls) ? urls : [urls];
-  for (const url of candidates) {
-    const decoded = await decodeUrl(ctx, url);
-    if (decoded) return decoded;
-  }
-  return null;
 }
 
 export class AudioEventBus {
@@ -300,9 +315,10 @@ export class AudioEventBus {
       );
     }
 
+    const sfxBase = await resolveSfxBase();
     await Promise.all(
-      Object.entries(SFX_URLS).map(async ([key, urls]) => {
-        this._sfxBuffers[key] = await decodeFromCandidates(ctx, urls);
+      Object.entries(SFX_FILES).map(async ([key, file]) => {
+        this._sfxBuffers[key] = await decodeUrl(ctx, sfxUrl(sfxBase, file));
       }),
     );
   }
