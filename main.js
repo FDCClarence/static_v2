@@ -13,12 +13,11 @@ import './src/entities/behaviors/StalkBehavior.js';
 import './src/entities/behaviors/DeceptiveBehavior.js';
 import './src/entities/behaviors/GuardBehavior.js';
 import './src/entities/behaviors/AmbushBehavior.js';
-import './src/ui/GameScreen.js';
-import './src/ui/DevOverlay.js';
+import { GameScreen } from './src/ui/GameScreen.js';
 import { PermissionScreen } from './src/ui/PermissionScreen.js';
 import { LandingPage } from './src/ui/LandingPage.js';
 
-const canvas = document.getElementById('game');
+const gameScreen = new GameScreen();
 
 const inputManager = new InputManager();
 inputManager.init();
@@ -32,16 +31,13 @@ landingPage.onStart = () => {
 const permissionScreen = new PermissionScreen();
 permissionScreen.onGranted = () => {
   permissionScreen.hide();
+  gameScreen.show();
   landingPage.show();
 };
 permissionScreen.show();
 
 function resizeCanvas() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.floor(window.innerWidth * dpr);
-  canvas.height = Math.floor(window.innerHeight * dpr);
-  canvas.style.width = `${window.innerWidth}px`;
-  canvas.style.height = `${window.innerHeight}px`;
+  gameScreen.syncCanvasSize();
 }
 
 resizeCanvas();
