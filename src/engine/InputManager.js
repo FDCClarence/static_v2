@@ -30,12 +30,13 @@ function snapHeading(deg) {
 }
 
 /**
- * Unit forward on XZ grid from compass-style degrees (0 = N, 90 = E).
+ * Unit forward on XZ grid from compass-style degrees (0 = N → -Z, 90 = E → +X).
+ * Matches N, NE, E, … as specified (e.g. N = { x: 0, z: -1 }).
  * @param {number} degrees
  */
 function forwardFromDegrees(degrees) {
   const r = (degrees * Math.PI) / 180;
-  return { x: Math.sin(r), z: Math.cos(r) };
+  return { x: Math.sin(r), z: -Math.cos(r) };
 }
 
 export class InputManager {
@@ -45,8 +46,6 @@ export class InputManager {
   constructor(emitter = gameEvents) {
     this.emitter = emitter;
 
-    /** @type {boolean} */
-    this._needsOrientationPermission = false;
     /** @type {boolean} */
     this._needsMotionPermission = false;
     /** @type {boolean} */
@@ -81,12 +80,13 @@ export class InputManager {
     this._onPointerDown = this._onPointerDown.bind(this);
     this._onPointerUp = this._onPointerUp.bind(this);
     this._onPointerCancel = this._onPointerCancel.bind(this);
+    this._onInputRaf = this._onInputRaf.bind(this);
+
+    /** @type {number | null} */
+    this._inputRafId = null;
   }
 
   init() {
-    this._needsOrientationPermission =
-      typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof DeviceOrientationEvent.requestPermission === 'function';
     this._needsMotionPermission =
       typeof DeviceMotionEvent !== 'undefined' &&
       typeof DeviceMotionEvent.requestPermission === 'function';
@@ -95,40 +95,38 @@ export class InputManager {
     window.addEventListener('pointerup', this._onPointerUp, { passive: true });
     window.addEventListener('pointercancel', this._onPointerCancel, { passive: true });
 
-    if (!this._needsOrientationPermission && !this._needsMotionPermission) {
-      this._attachSensors();
-    }
+    // DeviceOrientation permission is requested in PermissionScreen; listeners attach here.
+    this._attachSensors();
+    this._startInputTick();
   }
 
   /**
-   * Request sensor permission (iOS 13+). Must run from a user gesture.
+   * Request DeviceMotion permission on iOS 13+ (for low-rate orientation fallback).
+   * DeviceOrientation is already requested in PermissionScreen.
    * @returns {Promise<'granted' | 'denied' | string>}
    */
   async requestPermission() {
-    if (this._sensorsAttached) return 'granted';
-
+    if (!this._needsMotionPermission) return 'granted';
     try {
-      if (this._needsOrientationPermission) {
-        const r = await DeviceOrientationEvent.requestPermission();
-        if (r !== 'granted') return r;
-      }
-      if (this._needsMotionPermission) {
-        const r = await DeviceMotionEvent.requestPermission();
-        if (r !== 'granted') return r;
-      }
-      this._attachSensors();
-      return 'granted';
+      return await DeviceMotionEvent.requestPermission();
     } catch {
-      if (!this._needsOrientationPermission && !this._needsMotionPermission) {
-        this._attachSensors();
-      }
       return 'denied';
     }
   }
 
   /** @returns {number} Raw heading in degrees (0–360). */
-  get rawHeading() {
+  get heading() {
     return normalizeDeg(this._rawHeading);
+  }
+
+  /** @returns {number} Raw heading in degrees (0–360). */
+  get rawHeading() {
+    return this.heading;
+  }
+
+  /** @returns {string} Snapped 8-way direction label. */
+  get facingDirection() {
+    return this._snappedDirection;
   }
 
   /** @returns {string} Snapped 8-way direction label. */
@@ -148,6 +146,16 @@ export class InputManager {
     this._sensorsAttached = true;
     window.addEventListener('deviceorientation', this._onDeviceOrientation, true);
     window.addEventListener('devicemotion', this._onDeviceMotion, true);
+  }
+
+  _startInputTick() {
+    if (this._inputRafId != null) return;
+    this._inputRafId = requestAnimationFrame(this._onInputRaf);
+  }
+
+  _onInputRaf() {
+    this._inputRafId = requestAnimationFrame(this._onInputRaf);
+    this.emitter.emit('INPUT_TICK', { heading: normalizeDeg(this._smoothedHeading) });
   }
 
   _recordOrientationInterval() {
@@ -230,7 +238,7 @@ export class InputManager {
     const { label } = snapHeading(deg);
     if (label !== this._snappedDirection) {
       this._snappedDirection = label;
-      this.emitter.emit('FACING_CHANGED', { direction: label });
+      this.emitter.emit('FACING_CHANGED', { facingDirection: label });
     }
   }
 
@@ -262,7 +270,7 @@ export class InputManager {
       Math.abs(dx) < SWIPE_MAX_HORIZONTAL_PX &&
       dt < SWIPE_MAX_MS
     ) {
-      this.emitter.emit('MOVE_INTENT', { direction: this._snappedDirection });
+      this.emitter.emit('MOVE_INTENT', { facingDirection: this._snappedDirection });
     }
   }
 
