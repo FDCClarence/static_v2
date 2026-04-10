@@ -2,11 +2,11 @@
  * Resonance Audio scene + listener heading (deg) for SpatialSource panning.
  */
 import * as ResonanceAudioSdk from 'resonance-audio';
-import roomPresetsUrl from '../data/rooms/presets.json?url';
 import { formatCell } from '../engine/GridEngine.js';
 import { SpatialSource } from './SpatialSource.js';
 
 const { ResonanceAudio } = ResonanceAudioSdk;
+const roomPresetsUrl = new URL('../data/rooms/presets.json', import.meta.url);
 
 /** Fixed vertical extent for all presets (m). Horizontal audio is unaffected per spec. */
 const ROOM_HEIGHT_M = 3;
