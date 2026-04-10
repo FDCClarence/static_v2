@@ -12,6 +12,8 @@ export const playerAudioGrid = { x: 0, y: 0 };
 const MASTER_FADE_S = 2;
 const DEATH_RESET_DELAY_S = 3;
 const RAMP_TAIL_S = 0.02;
+const AUDIO_ASSETS_ENABLED =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('audio') === '1';
 
 /** @param {string} file */
 function assetUrl(file) {
@@ -213,6 +215,7 @@ export class AudioEventBus {
   async _loadBuffers() {
     const ctx = audioContext;
     if (!ctx) return;
+    if (!AUDIO_ASSETS_ENABLED) return;
 
     const entries = Object.entries(URLS.footstep);
     await Promise.all(
