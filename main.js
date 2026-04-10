@@ -99,6 +99,11 @@ gameEvents.on('DOOR_UNLOCKED', (detail) => {
   transferredStaticToDoorOnPickup = true;
   audioEngine.removeStaticSource(activeKeyStaticSource);
   activeKeyStaticSource = audioEngine.createStaticSource(d.x, d.y);
+  if (activeKeyStaticSource) {
+    // Keep door static spatial cue aligned with current listener state immediately.
+    audioEngine.setListenerTransform(playerAudioGrid, inputManager.heading);
+    activeKeyStaticSource.updateDirectionalFilter(playerAudioGrid, inputManager.heading);
+  }
 });
 
 const permissionScreen = new PermissionScreen();
