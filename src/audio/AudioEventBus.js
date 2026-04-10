@@ -45,7 +45,11 @@ const SFX_URLS = {
   keyJingle: '/assets/sfx/key-jingle.mp3',
   attemptOpenLockedDoor: '/assets/sfx/attempt-open-locked-door.mp3',
   openDoorWithKey: '/assets/sfx/open-door-with-key.mp3',
+  wallBump: '/assets/sfx/wall-bump.mp3',
+  backroomsBgMusic: '/assets/sfx/backrooms-bg-music.mp3',
+  landingPageMusic: '/assets/sfx/landing-page-music.mp3',
 };
+const MUSIC_FADE_S = 0.8;
 
 /** Map arbitrary floorType strings to footstep asset keys. */
 const FLOOR_TYPE_ALIASES = {
@@ -161,7 +165,18 @@ export class AudioEventBus {
       keyJingle: null,
       attemptOpenLockedDoor: null,
       openDoorWithKey: null,
+      wallBump: null,
+      backroomsBgMusic: null,
+      landingPageMusic: null,
     };
+    /** @type {AudioBufferSourceNode | null} */
+    this._bgMusicSource = null;
+    /** @type {GainNode | null} */
+    this._bgMusicGain = null;
+    /** @type {AudioBufferSourceNode | null} */
+    this._landingMusicSource = null;
+    /** @type {GainNode | null} */
+    this._landingMusicGain = null;
 
     /** @type {boolean} */
     this._deathInProgress = false;
@@ -301,22 +316,29 @@ export class AudioEventBus {
     g.linearRampToValueAtTime(value, t + durationS);
   }
 
-  _refreshAllDirectional() {
+  /**
+   * @param {number | undefined} [headingOverride]
+   */
+  _refreshAllDirectional(headingOverride) {
     const im = this._inputManager;
     if (!im) return;
-    const heading = im.heading;
+    const heading = typeof headingOverride === 'number' ? headingOverride : im.heading;
     for (const src of this._directionalSources) {
       src.updateDirectionalFilter(playerAudioGrid, heading);
     }
   }
 
-  _onInputTick() {
+  _onInputTick(detail) {
     const im = this._inputManager;
     if (!im || !audioContext) return;
     void audioContext.resume().catch(() => {});
-    audioEngine.setListenerTransform(playerAudioGrid, im.heading);
-    audioEngine.updateStaticSourceFilters(playerAudioGrid, im.heading);
-    this._refreshAllDirectional();
+    const tickHeading =
+      detail && typeof detail === 'object' && typeof /** @type {{ heading?: unknown }} */ (detail).heading === 'number'
+        ? /** @type {{ heading: number }} */ (detail).heading
+        : im.heading;
+    audioEngine.setListenerTransform(playerAudioGrid, tickHeading);
+    audioEngine.updateStaticSourceFilters(playerAudioGrid, tickHeading);
+    this._refreshAllDirectional(tickHeading);
   }
 
   _onPlayerMoved(detail) {
@@ -357,6 +379,11 @@ export class AudioEventBus {
         if (lockedSfx) this._playSfx(lockedSfx);
         return;
       }
+    }
+    const wallBump = this._sfxBuffers.wallBump;
+    if (wallBump) {
+      this._playSfx(wallBump, { gain: 2 });
+      return;
     }
     const g = gridFromDetail(detail);
     if (!g || !this._bumpSource) return;
@@ -595,6 +622,146 @@ export class AudioEventBus {
       }
       this._deathDirectSource.disconnect();
       this._deathDirectSource = null;
+    }
+  }
+
+  startBgMusic() {
+    const ctx = audioContext;
+    const buffer = this._sfxBuffers.backroomsBgMusic;
+    if (!ctx || !buffer || this._bgMusicSource) return;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.5, now + MUSIC_FADE_S);
+    src.connect(gain);
+    if (this._masterGain) gain.connect(this._masterGain);
+    else gain.connect(ctx.destination);
+
+    src.onended = () => {
+      if (this._bgMusicSource === src) {
+        this._bgMusicSource = null;
+        this._bgMusicGain = null;
+      }
+    };
+
+    this._bgMusicSource = src;
+    this._bgMusicGain = gain;
+    void ctx.resume().then(() => {
+      try {
+        src.start();
+      } catch {
+        /* */
+      }
+    });
+  }
+
+  stopBgMusic() {
+    const ctx = audioContext;
+    const source = this._bgMusicSource;
+    const gain = this._bgMusicGain;
+    if (!source || !gain || !ctx) return;
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + MUSIC_FADE_S);
+    const sourceToStop = source;
+    const gainToDisconnect = gain;
+    setTimeout(() => {
+      try {
+        sourceToStop.stop();
+      } catch {
+        /* */
+      }
+      sourceToStop.disconnect();
+      gainToDisconnect.disconnect();
+    }, Math.ceil((MUSIC_FADE_S + 0.05) * 1000));
+    this._bgMusicSource = null;
+    this._bgMusicGain = null;
+  }
+
+  startLandingMusic() {
+    const ctx = audioContext;
+    const buffer = this._sfxBuffers.landingPageMusic;
+    if (!ctx || !buffer || this._landingMusicSource) return;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.5, now + MUSIC_FADE_S);
+    src.connect(gain);
+    if (this._masterGain) gain.connect(this._masterGain);
+    else gain.connect(ctx.destination);
+
+    src.onended = () => {
+      if (this._landingMusicSource === src) {
+        this._landingMusicSource = null;
+        this._landingMusicGain = null;
+      }
+    };
+
+    this._landingMusicSource = src;
+    this._landingMusicGain = gain;
+    void ctx.resume().then(() => {
+      try {
+        src.start();
+      } catch {
+        /* */
+      }
+    });
+  }
+
+  stopLandingMusic() {
+    const ctx = audioContext;
+    const source = this._landingMusicSource;
+    const gain = this._landingMusicGain;
+    if (!source || !gain || !ctx) return;
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + MUSIC_FADE_S);
+    const sourceToStop = source;
+    const gainToDisconnect = gain;
+    setTimeout(() => {
+      try {
+        sourceToStop.stop();
+      } catch {
+        /* */
+      }
+      sourceToStop.disconnect();
+      gainToDisconnect.disconnect();
+    }, Math.ceil((MUSIC_FADE_S + 0.05) * 1000));
+    this._landingMusicSource = null;
+    this._landingMusicGain = null;
+  }
+
+  stopAllMusic() {
+    this.stopBgMusic();
+    this.stopLandingMusic();
+  }
+
+  stopBgMusicImmediate() {
+    if (!this._bgMusicSource) return;
+    try {
+      this._bgMusicSource.stop();
+    } catch {
+      /* */
+    }
+    this._bgMusicSource.disconnect();
+    this._bgMusicSource = null;
+    if (this._bgMusicGain) {
+      this._bgMusicGain.disconnect();
+      this._bgMusicGain = null;
     }
   }
 }

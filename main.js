@@ -34,14 +34,18 @@ void audioEventBus.init({ inputManager });
 
 const landingPage = new LandingPage();
 landingPage.onStart = async () => {
+  audioEventBus.stopLandingMusic();
   landingPage.hide();
   gameOverScreen.hide();
   gameScreen.show();
+  audioEventBus.startBgMusic();
   currentLevelIndex = 0;
   await startLevel(currentLevelIndex);
 };
 
 gameOverScreen.onBackToLanding = () => {
+  audioEventBus.stopBgMusic();
+  audioEventBus.startLandingMusic();
   gameOverScreen.hide();
   gameScreen.hide();
   landingPage.show();
@@ -50,6 +54,7 @@ gameOverScreen.onBackToLanding = () => {
 gameEvents.on('LEVEL_EXITED', async () => {
   const nextLevelIndex = currentLevelIndex + 1;
   if (nextLevelIndex >= LEVEL_IDS.length) {
+    audioEventBus.stopBgMusic();
     gameScreen.hide();
     gameOverScreen.show();
     return;
@@ -63,12 +68,21 @@ gameEvents.on('KEY_COLLECTED', () => {
   activeKeyStaticSource = null;
 });
 
+gameEvents.on('DOOR_UNLOCKED', (detail) => {
+  if (!detail || typeof detail !== 'object') return;
+  const d = /** @type {{ x?: unknown; y?: unknown }} */ (detail);
+  if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
+  audioEngine.removeStaticSource(activeKeyStaticSource);
+  activeKeyStaticSource = audioEngine.createStaticSource(d.x, d.y);
+});
+
 const permissionScreen = new PermissionScreen();
 permissionScreen.onGranted = () => {
   inputManager.attachSensorsAfterUserGesture();
   permissionScreen.hide();
   gameScreen.show();
   landingPage.show();
+  audioEventBus.startLandingMusic();
 };
 permissionScreen.show();
 
