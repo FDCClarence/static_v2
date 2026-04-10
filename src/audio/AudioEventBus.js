@@ -20,10 +20,19 @@ function assetUrl(file) {
   return new URL(`../../audio/${file}`, import.meta.url).href;
 }
 
-/** @param {string} file */
-function publicSfxUrl(file) {
-  if (typeof window === 'undefined') return `assets/sfx/${file}`;
-  return new URL(`assets/sfx/${file}`, document.baseURI).href;
+/**
+ * In proper Vite builds, files from /public are served from /assets/... .
+ * Some GH Pages setups may serve source files directly, requiring /public/assets/... .
+ * Try both to keep audio loading in either environment.
+ * @param {string} file
+ * @returns {string[]}
+ */
+function publicSfxUrls(file) {
+  if (typeof window === 'undefined') return [`assets/sfx/${file}`, `public/assets/sfx/${file}`];
+  return [
+    new URL(`assets/sfx/${file}`, document.baseURI).href,
+    new URL(`public/assets/sfx/${file}`, document.baseURI).href,
+  ];
 }
 
 /** Optional decode URLs (add files under /public/audio/). */
@@ -47,13 +56,13 @@ const URLS = {
   },
 };
 const SFX_URLS = {
-  walkingWood: publicSfxUrl('walking-wood.mp3'),
-  keyJingle: publicSfxUrl('key-jingle.mp3'),
-  attemptOpenLockedDoor: publicSfxUrl('attempt-open-locked-door.mp3'),
-  openDoorWithKey: publicSfxUrl('open-door-with-key.mp3'),
-  wallBump: publicSfxUrl('wall-bump.mp3'),
-  backroomsBgMusic: publicSfxUrl('backrooms-bg-music.mp3'),
-  landingPageMusic: publicSfxUrl('landing-page-music.mp3'),
+  walkingWood: publicSfxUrls('walking-wood.mp3'),
+  keyJingle: publicSfxUrls('key-jingle.mp3'),
+  attemptOpenLockedDoor: publicSfxUrls('attempt-open-locked-door.mp3'),
+  openDoorWithKey: publicSfxUrls('open-door-with-key.mp3'),
+  wallBump: publicSfxUrls('wall-bump.mp3'),
+  backroomsBgMusic: publicSfxUrls('backrooms-bg-music.mp3'),
+  landingPageMusic: publicSfxUrls('landing-page-music.mp3'),
 };
 const MUSIC_FADE_S = 0.8;
 
@@ -125,6 +134,20 @@ async function decodeUrl(ctx, url) {
   } catch {
     return null;
   }
+}
+
+/**
+ * @param {AudioContext} ctx
+ * @param {string | string[]} urls
+ * @returns {Promise<AudioBuffer | null>}
+ */
+async function decodeFromCandidates(ctx, urls) {
+  const candidates = Array.isArray(urls) ? urls : [urls];
+  for (const url of candidates) {
+    const decoded = await decodeUrl(ctx, url);
+    if (decoded) return decoded;
+  }
+  return null;
 }
 
 export class AudioEventBus {
@@ -278,8 +301,8 @@ export class AudioEventBus {
     }
 
     await Promise.all(
-      Object.entries(SFX_URLS).map(async ([key, url]) => {
-        this._sfxBuffers[key] = await decodeUrl(ctx, url);
+      Object.entries(SFX_URLS).map(async ([key, urls]) => {
+        this._sfxBuffers[key] = await decodeFromCandidates(ctx, urls);
       }),
     );
   }
