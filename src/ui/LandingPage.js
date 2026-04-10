@@ -218,6 +218,10 @@ export class LandingPage {
 
   hide() {
     if (!this._root) return;
+    // Avoid aria-hidden + focused descendant warning.
+    if (document.activeElement instanceof HTMLElement && this._root.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     this._root.classList.remove('landing-page--visible');
     this._root.style.display = 'none';
     this._root.setAttribute('aria-hidden', 'true');

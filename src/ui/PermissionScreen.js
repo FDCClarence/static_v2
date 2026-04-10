@@ -1,4 +1,5 @@
 /** First screen: audio unlock + DeviceOrientation permission (one tap). */
+import { audioContext } from '../audio/AudioEngine.js';
 
 const STYLE_ID = 'permission-screen-styles';
 
@@ -142,14 +143,9 @@ export class PermissionScreen {
       /* still continue */
     }
 
-    // Perform audio unlock only after motion permission prompts so the original
-    // tap remains a valid user gesture for iOS sensor permission APIs.
+    // Unlock the app's shared AudioContext after motion prompts.
     try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (typeof Ctx === 'function') {
-        const ctx = new Ctx();
-        await ctx.suspend();
-      }
+      await audioContext?.resume();
     } catch {
       /* still continue */
     }
@@ -170,6 +166,10 @@ export class PermissionScreen {
   }
 
   hide() {
+    // Avoid aria-hidden + focused descendant warning.
+    if (document.activeElement instanceof HTMLElement && this._root.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     this._root.style.display = 'none';
     this._root.setAttribute('aria-hidden', 'true');
   }

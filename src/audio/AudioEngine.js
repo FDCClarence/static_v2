@@ -200,21 +200,14 @@ export class AudioEngine {
     const osc = ctx.createOscillator();
     /** @type {AudioNode} */
     let sourceTail = osc;
-    try {
-      osc.type = 'white';
-    } catch {
-      /* invalid type */
-    }
-    if (osc.type !== 'white') {
-      osc.type = 'sawtooth';
-      osc.frequency.value = 80;
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = 1800;
-      bp.Q.value = 0.5;
-      osc.connect(bp);
-      sourceTail = bp;
-    }
+    osc.type = 'sawtooth';
+    osc.frequency.value = 80;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1800;
+    bp.Q.value = 0.5;
+    osc.connect(bp);
+    sourceTail = bp;
 
     const gain = ctx.createGain();
     gain.gain.value = 0.15;
