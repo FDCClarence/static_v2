@@ -3,6 +3,7 @@
 const HUD_H = 32;
 const PAD = 40;
 const HUD_PAD_X = 12;
+const LABEL_MARGIN = 24;
 
 /** @type {Record<string, number>} */
 const FACING_TO_RAD = {
@@ -126,24 +127,47 @@ export class DevOverlay {
 
     const { gridW, gridH, cells } = this._normalizeGrid(this._gridState);
 
-    const availW = cssW - 2 * PAD;
-    const availH = cssH - 2 * PAD - HUD_H;
     const denom = Math.max(gridW, gridH, 1);
-    const cellSize = Math.floor(Math.min(availW, availH) / denom);
+    const cellSize = Math.floor(
+      Math.min(cssW - 80 - LABEL_MARGIN, cssH - 80 - LABEL_MARGIN) / denom,
+    );
 
     const gridPxW = gridW * cellSize;
     const gridPxH = gridH * cellSize;
-    const offsetX = PAD + (availW - gridPxW) / 2;
-    const offsetY = PAD + (availH - gridPxH) / 2;
+    const contentAvailW = cssW - 2 * PAD;
+    const contentAvailH = cssH - 2 * PAD - HUD_H;
+    const blockLeft = PAD + (contentAvailW - (LABEL_MARGIN + gridPxW)) / 2;
+    const blockTop = PAD + (contentAvailH - (LABEL_MARGIN + gridPxH)) / 2;
+    const gridOriginX = blockLeft + LABEL_MARGIN;
+    const gridOriginY = blockTop + LABEL_MARGIN;
 
     const px = this._playerPos;
     const ex = px?.x ?? -1;
     const ey = px?.y ?? -1;
 
+    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.fillStyle = '#555';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    for (let col = 0; col < gridW; col++) {
+      const letter = String.fromCharCode(65 + col);
+      ctx.fillText(
+        letter,
+        gridOriginX + col * cellSize + cellSize / 2,
+        gridOriginY - 8,
+      );
+    }
+
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let row = 0; row < gridH; row++) {
+      ctx.fillText(String(row + 1), gridOriginX - 8, gridOriginY + row * cellSize + cellSize / 2);
+    }
+
     for (let gy = 0; gy < gridH; gy++) {
       for (let gx = 0; gx < gridW; gx++) {
         ctx.save();
-        ctx.translate(offsetX + gx * cellSize, offsetY + gy * cellSize);
+        ctx.translate(gridOriginX + gx * cellSize, gridOriginY + gy * cellSize);
 
         const cell = cells[gy]?.[gx] ?? 0;
         const isPlayer = gx === ex && gy === ey;
@@ -198,6 +222,14 @@ export class DevOverlay {
           ctx.fillText('C', cellSize / 2, cellSize / 2);
         }
 
+        ctx.save();
+        ctx.font = '8px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+        ctx.fillStyle = '#333';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${String.fromCharCode(65 + gx)}${gy + 1}`, 3, 10);
+        ctx.restore();
+
         if (isPlayer) {
           const rad = FACING_TO_RAD[this._facingDirection] ?? 0;
           const inset = 6;
@@ -216,12 +248,6 @@ export class DevOverlay {
           ctx.fill();
           ctx.restore();
         }
-
-        ctx.font = '8px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-        ctx.fillStyle = '#333';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(`${gx},${gy}`, 8, cellSize - 8);
 
         ctx.restore();
       }
@@ -243,8 +269,8 @@ export class DevOverlay {
     const px = this._playerPos;
     const playerStr =
       px != null && Number.isFinite(px.x) && Number.isFinite(px.y)
-        ? `(${px.x},${px.y})`
-        : '(—)';
+        ? `${String.fromCharCode(65 + px.x)}${px.y + 1}`
+        : '—';
     const creatureCount = this._creatureCount();
     const stateStr =
       (this._gridState && typeof this._gridState.state === 'string' && this._gridState.state) ||

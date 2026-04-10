@@ -1,2 +1,523 @@
-/** Game events → audio reactions */
-export {};
+/**
+ * Subscribes to game events and drives spatial audio + master bus.
+ */
+import { audioContext, audioEngine } from './AudioEngine.js';
+import { SpatialSource } from './SpatialSource.js';
+import { gameEvents } from '../engine/EventEmitter.js';
+import { formatCell, parseCell } from '../engine/GridEngine.js';
+
+/** Current player cell for panning; game may also set via PLAYER_MOVED payload. */
+export const playerAudioGrid = { x: 0, y: 0 };
+
+const MASTER_FADE_S = 2;
+const DEATH_RESET_DELAY_S = 3;
+const RAMP_TAIL_S = 0.02;
+
+/** Optional decode URLs (add files under /public/audio/). */
+const URLS = {
+  footstep: {
+    default: '/audio/footstep_default.wav',
+    wood: '/audio/footstep_wood.wav',
+    tile: '/audio/footstep_tile.wav',
+    carpet: '/audio/footstep_carpet.wav',
+    metal: '/audio/footstep_metal.wav',
+    concrete: '/audio/footstep_concrete.wav',
+    parquet: '/audio/footstep_parquet.wav',
+  },
+  bump: '/audio/bump.wav',
+  death: '/audio/death.wav',
+  ambient: {
+    default: '/audio/ambient_default.wav',
+  },
+  creature: {
+    default: '/audio/creature_default.wav',
+  },
+};
+
+/** Map arbitrary floorType strings to footstep asset keys. */
+const FLOOR_TYPE_ALIASES = {
+  floor: 'default',
+  parquet: 'parquet',
+  parquetonconcrete: 'parquet',
+  wood: 'wood',
+  tile: 'tile',
+  carpet: 'carpet',
+  metal: 'metal',
+  concrete: 'concrete',
+  rough: 'concrete',
+  smooth: 'tile',
+  brick: 'concrete',
+  brickbare: 'concrete',
+  brickpainted: 'concrete',
+};
+
+/**
+ * @param {unknown} detail
+ * @returns {{ x: number; y: number } | null}
+ */
+function gridFromDetail(detail) {
+  if (!detail || typeof detail !== 'object') return null;
+  const d = /** @type {Record<string, unknown>} */ (detail);
+  if (typeof d.cell === 'string') {
+    try {
+      return parseCell(d.cell);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof d.x === 'number' && typeof d.y === 'number' && Number.isFinite(d.x) && Number.isFinite(d.y)) {
+    return { x: d.x, y: d.y };
+  }
+  const pos = d.position;
+  if (pos && typeof pos === 'object') {
+    const p = /** @type {Record<string, unknown>} */ (pos);
+    if (typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y };
+  }
+  return null;
+}
+
+/**
+ * @param {unknown} floorType
+ * @returns {string}
+ */
+function footstepKeyForFloor(floorType) {
+  if (floorType == null || floorType === '') return 'default';
+  const k = String(floorType).toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (k in URLS.footstep) return k;
+  if (k in FLOOR_TYPE_ALIASES) return FLOOR_TYPE_ALIASES[k];
+  return 'default';
+}
+
+/**
+ * @param {AudioContext} ctx
+ * @param {string} url
+ * @returns {Promise<AudioBuffer | null>}
+ */
+async function decodeUrl(ctx, url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const raw = await res.arrayBuffer();
+    return await ctx.decodeAudioData(raw.slice(0));
+  } catch {
+    return null;
+  }
+}
+
+export class AudioEventBus {
+  constructor() {
+    /** @type {import('../engine/InputManager.js').InputManager | null} */
+    this._inputManager = null;
+    /** @type {GainNode | null} */
+    this._masterGain = null;
+    /** @type {boolean} */
+    this._masterPatched = false;
+    /** @type {Set<SpatialSource>} */
+    this._directionalSources = new Set();
+    /** @type {Map<string, SpatialSource>} */
+    this._ambientById = new Map();
+    /** @type {Map<string, SpatialSource>} */
+    this._creatureById = new Map();
+
+    /** @type {SpatialSource | null} */
+    this._footstepSource = null;
+    /** @type {SpatialSource | null} */
+    this._bumpSource = null;
+    /** @type {GainNode | null} */
+    this._deathDirectGain = null;
+    /** @type {AudioBufferSourceNode | null} */
+    this._deathDirectSource = null;
+
+    /** @type {boolean} */
+    this._busInitialized = false;
+
+    /** @type {Record<string, AudioBuffer | null>} */
+    this._buffers = {
+      bump: null,
+      death: null,
+    };
+    /** @type {Record<string, AudioBuffer | null>} */
+    this._footstepBuffers = {};
+    /** @type {Record<string, AudioBuffer | null>} */
+    this._ambientBuffers = {};
+    /** @type {Record<string, AudioBuffer | null>} */
+    this._creatureBuffers = {};
+
+    /** @type {boolean} */
+    this._deathInProgress = false;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._deathResetTimer = null;
+
+    this._onInputTick = this._onInputTick.bind(this);
+    this._onPlayerMoved = this._onPlayerMoved.bind(this);
+    this._onPlayerBlocked = this._onPlayerBlocked.bind(this);
+    this._onObjectAmbient = this._onObjectAmbient.bind(this);
+    this._onCreatureTick = this._onCreatureTick.bind(this);
+    this._onPlayerDeath = this._onPlayerDeath.bind(this);
+    this._onResetGame = this._onResetGame.bind(this);
+  }
+
+  /**
+   * @param {{ inputManager: import('../engine/InputManager.js').InputManager }} opts
+   */
+  async init(opts) {
+    if (this._busInitialized) return;
+    this._inputManager = opts.inputManager;
+
+    await this._ensureAudioReady();
+    this._patchMasterGain();
+    this._initDeathDirectGain();
+
+    gameEvents.on('INPUT_TICK', this._onInputTick);
+    gameEvents.on('PLAYER_MOVED', this._onPlayerMoved);
+    gameEvents.on('PLAYER_BLOCKED', this._onPlayerBlocked);
+    gameEvents.on('OBJECT_AMBIENT', this._onObjectAmbient);
+    gameEvents.on('CREATURE_TICK', this._onCreatureTick);
+    gameEvents.on('PLAYER_DEATH', this._onPlayerDeath);
+    gameEvents.on('RESET_GAME', this._onResetGame);
+
+    await this._loadBuffers();
+    this._createOneShotSources();
+    this._busInitialized = true;
+  }
+
+  _initDeathDirectGain() {
+    const ctx = audioContext;
+    if (!ctx || this._deathDirectGain) return;
+    this._deathDirectGain = ctx.createGain();
+    this._deathDirectGain.gain.value = 1;
+    this._deathDirectGain.connect(ctx.destination);
+  }
+
+  async _ensureAudioReady() {
+    if (audioContext) await audioContext.resume().catch(() => {});
+  }
+
+  _patchMasterGain() {
+    const ra = audioEngine.resonanceAudio;
+    const ctx = audioContext;
+    if (!ra || !ctx || this._masterPatched) return;
+    this._masterGain = ctx.createGain();
+    this._masterGain.gain.value = 1;
+    ra.output.disconnect();
+    ra.output.connect(this._masterGain);
+    this._masterGain.connect(ctx.destination);
+    this._masterPatched = true;
+  }
+
+  async _loadBuffers() {
+    const ctx = audioContext;
+    if (!ctx) return;
+
+    const entries = Object.entries(URLS.footstep);
+    await Promise.all(
+      entries.map(async ([key, url]) => {
+        this._footstepBuffers[key] = await decodeUrl(ctx, url);
+      }),
+    );
+
+    this._buffers.bump = await decodeUrl(ctx, URLS.bump);
+    this._buffers.death = await decodeUrl(ctx, URLS.death);
+
+    await Promise.all(
+      Object.entries(URLS.ambient).map(async ([key, url]) => {
+        this._ambientBuffers[key] = await decodeUrl(ctx, url);
+      }),
+    );
+
+    await Promise.all(
+      Object.entries(URLS.creature).map(async ([key, url]) => {
+        this._creatureBuffers[key] = await decodeUrl(ctx, url);
+      }),
+    );
+  }
+
+  _createOneShotSources() {
+    const ctx = audioContext;
+    const ra = audioEngine.resonanceAudio;
+    if (!ctx || !ra) return;
+
+    const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
+    const footBuf = this._footstepBuffers.default ?? silent;
+    const bumpBuf = this._buffers.bump ?? silent;
+
+    this._footstepSource = new SpatialSource({
+      audioContext: ctx,
+      resonanceAudio: ra,
+      cell: formatCell(playerAudioGrid.x, playerAudioGrid.y),
+      soundBuffer: footBuf,
+      loop: false,
+      baseVolume: 1,
+    });
+
+    this._bumpSource = new SpatialSource({
+      audioContext: ctx,
+      resonanceAudio: ra,
+      cell: 'A1',
+      soundBuffer: bumpBuf,
+      loop: false,
+      baseVolume: 1,
+    });
+  }
+
+  _rampMasterGain(value, durationS) {
+    const g = this._masterGain?.gain;
+    const ctx = audioContext;
+    if (!g || !ctx) return;
+    const t = ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(value, t + durationS);
+  }
+
+  _refreshAllDirectional() {
+    const im = this._inputManager;
+    if (!im) return;
+    const heading = im.heading;
+    for (const src of this._directionalSources) {
+      src.updateDirectionalFilter(playerAudioGrid, heading);
+    }
+  }
+
+  _onInputTick() {
+    const im = this._inputManager;
+    if (!im || !audioContext) return;
+    void audioContext.resume().catch(() => {});
+    audioEngine.setListenerOrientation(im.heading);
+    this._refreshAllDirectional();
+  }
+
+  _onPlayerMoved(detail) {
+    const g = gridFromDetail(detail);
+    if (g) {
+      playerAudioGrid.x = g.x;
+      playerAudioGrid.y = g.y;
+    }
+    const floorType =
+      detail && typeof detail === 'object' && 'floorType' in detail
+        ? /** @type {{ floorType?: unknown }} */ (detail).floorType
+        : undefined;
+    const key = footstepKeyForFloor(floorType);
+    const buf = this._footstepBuffers[key] ?? this._footstepBuffers.default;
+    if (!this._footstepSource || !buf) return;
+
+    this._footstepSource.setPosition(formatCell(playerAudioGrid.x, playerAudioGrid.y));
+    this._footstepSource.setSoundBuffer(buf);
+    this._footstepSource.onPlaybackEnded = () => {
+      this._directionalSources.delete(this._footstepSource);
+      if (this._footstepSource) this._footstepSource.onPlaybackEnded = null;
+    };
+    this._directionalSources.add(this._footstepSource);
+    this._footstepSource.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
+    void audioContext?.resume().then(() => this._footstepSource?.play());
+  }
+
+  _onPlayerBlocked(detail) {
+    const g = gridFromDetail(detail);
+    if (!g || !this._bumpSource) return;
+    this._bumpSource.setPosition(formatCell(g.x, g.y));
+    this._bumpSource.onPlaybackEnded = () => {
+      this._directionalSources.delete(this._bumpSource);
+      if (this._bumpSource) this._bumpSource.onPlaybackEnded = null;
+    };
+    this._directionalSources.add(this._bumpSource);
+    this._bumpSource.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
+    void audioContext?.resume().then(() => this._bumpSource?.play());
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onObjectAmbient(detail) {
+    const ctx = audioContext;
+    const ra = audioEngine.resonanceAudio;
+    if (!ctx || !ra || !detail || typeof detail !== 'object') return;
+
+    const raw = /** @type {{ objects?: unknown }} */ (detail).objects;
+    if (!Array.isArray(raw)) return;
+
+    /** @type {Map<string, { cell: string; soundKey: string }>} */
+    const next = new Map();
+    for (const o of raw) {
+      if (!o || typeof o !== 'object') continue;
+      const ob = /** @type {Record<string, unknown>} */ (o);
+      if (typeof ob.id !== 'string') continue;
+      const g = gridFromDetail(ob);
+      if (!g) continue;
+      const soundKey =
+        typeof ob.soundKey === 'string' && ob.soundKey in URLS.ambient ? ob.soundKey : 'default';
+      next.set(ob.id, { cell: formatCell(g.x, g.y), soundKey });
+    }
+
+    for (const [id, src] of this._ambientById) {
+      if (!next.has(id)) {
+        src.stop();
+        this._directionalSources.delete(src);
+        this._ambientById.delete(id);
+      }
+    }
+
+    for (const [id, spec] of next) {
+      let src = this._ambientById.get(id);
+      const ambBuf = this._ambientBuffers[spec.soundKey] ?? this._ambientBuffers.default;
+      if (!ambBuf) continue;
+
+      if (!src) {
+        src = new SpatialSource({
+          audioContext: ctx,
+          resonanceAudio: ra,
+          cell: spec.cell,
+          soundBuffer: ambBuf,
+          loop: true,
+          baseVolume: 1,
+        });
+        this._ambientById.set(id, src);
+        this._directionalSources.add(src);
+        void audioContext?.resume().then(() => src?.play());
+      } else {
+        src.setPosition(spec.cell);
+        src.setSoundBuffer(ambBuf);
+      }
+    }
+
+    this._refreshAllDirectional();
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onCreatureTick(detail) {
+    const raw = detail && typeof detail === 'object' ? /** @type {{ creatures?: unknown }} */ (detail).creatures : null;
+    if (!Array.isArray(raw)) return;
+
+    const ctx = audioContext;
+    const ra = audioEngine.resonanceAudio;
+    if (!ctx || !ra) return;
+
+    const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
+    const seen = new Set();
+    for (const c of raw) {
+      if (!c || typeof c !== 'object') continue;
+      const cr = /** @type {Record<string, unknown>} */ (c);
+      if (typeof cr.id !== 'string') continue;
+      const g = gridFromDetail(cr);
+      if (!g) continue;
+      seen.add(cr.id);
+      const cell = formatCell(g.x, g.y);
+      const ck =
+        typeof cr.soundKey === 'string' && cr.soundKey in URLS.creature ? cr.soundKey : 'default';
+      const cBuf = this._creatureBuffers[ck] ?? this._creatureBuffers.default;
+      const audible = cBuf != null;
+      const buf = cBuf ?? silent;
+      let src = this._creatureById.get(cr.id);
+      if (!src) {
+        src = new SpatialSource({
+          audioContext: ctx,
+          resonanceAudio: ra,
+          cell,
+          soundBuffer: buf,
+          loop: true,
+          baseVolume: audible ? 1 : 0,
+        });
+        this._creatureById.set(cr.id, src);
+        this._directionalSources.add(src);
+        if (audible) void audioContext?.resume().then(() => src?.play());
+      } else {
+        src.setPosition(cell);
+        src.setSoundBuffer(buf);
+        src.setVolume(audible ? 1 : 0);
+        if (audible) {
+          if (!src.playing) void audioContext?.resume().then(() => src.play());
+        } else {
+          src.stop();
+        }
+      }
+    }
+
+    for (const [id, src] of this._creatureById) {
+      if (!seen.has(id)) {
+        src.stop();
+        this._directionalSources.delete(src);
+        this._creatureById.delete(id);
+      }
+    }
+
+    this._refreshAllDirectional();
+  }
+
+  _onPlayerDeath() {
+    if (this._deathInProgress) return;
+    this._deathInProgress = true;
+
+    this._rampMasterGain(0, MASTER_FADE_S);
+
+    const ctx = audioContext;
+    const buf = this._buffers.death;
+    const gDeath = this._deathDirectGain;
+    if (ctx && buf && gDeath) {
+      try {
+        this._deathDirectSource?.stop();
+      } catch {
+        /* */
+      }
+      this._deathDirectSource?.disconnect();
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(gDeath);
+      gDeath.gain.cancelScheduledValues(t);
+      gDeath.gain.setValueAtTime(1, t);
+      src.onended = () => {
+        if (this._deathDirectSource === src) this._deathDirectSource = null;
+      };
+      this._deathDirectSource = src;
+      void ctx.resume().then(() => {
+        try {
+          src.start(t);
+        } catch {
+          /* */
+        }
+      });
+    }
+
+    if (this._deathResetTimer) clearTimeout(this._deathResetTimer);
+    this._deathResetTimer = setTimeout(() => {
+      this._deathResetTimer = null;
+      gameEvents.emit('RESET_GAME');
+    }, DEATH_RESET_DELAY_S * 1000);
+  }
+
+  _onResetGame() {
+    if (this._deathResetTimer) {
+      clearTimeout(this._deathResetTimer);
+      this._deathResetTimer = null;
+    }
+    this._deathInProgress = false;
+
+    this._rampMasterGain(1, RAMP_TAIL_S);
+
+    for (const src of this._ambientById.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
+    }
+    this._ambientById.clear();
+
+    for (const src of this._creatureById.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
+    }
+    this._creatureById.clear();
+
+    if (this._deathDirectSource) {
+      try {
+        this._deathDirectSource.stop();
+      } catch {
+        /* */
+      }
+      this._deathDirectSource.disconnect();
+      this._deathDirectSource = null;
+    }
+  }
+}
+
+export const audioEventBus = new AudioEventBus();

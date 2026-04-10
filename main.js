@@ -1,6 +1,6 @@
-import './src/audio/AudioEngine.js';
+import { audioEngine, audioContext } from './src/audio/AudioEngine.js';
+import { audioEventBus } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
-import './src/audio/AudioEventBus.js';
 import './src/audio/ReverbZones.js';
 import './src/engine/GridEngine.js';
 import './src/engine/GameLoop.js';
@@ -21,6 +21,8 @@ const gameScreen = new GameScreen();
 
 const inputManager = new InputManager();
 inputManager.init();
+audioEngine.init();
+void audioEventBus.init({ inputManager });
 
 const landingPage = new LandingPage();
 landingPage.onStart = () => {
@@ -45,4 +47,5 @@ window.addEventListener('resize', resizeCanvas);
 
 async function beginFromUserGesture() {
   await inputManager.requestPermission();
+  await audioContext?.resume().catch(() => {});
 }

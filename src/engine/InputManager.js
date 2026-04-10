@@ -1,4 +1,7 @@
-/** Gyro, swipe detection, 8-way direction */
+/**
+ * 2D grid input: compass heading on one axis, swipe-up to move.
+ * Grid: x right, y down. Audio uses heading angle directly (no forward vector).
+ */
 import { gameEvents } from './EventEmitter.js';
 
 const EMA_FACTOR = 0.15;
@@ -11,6 +14,18 @@ const ORIENTATION_MAX_INTERVAL_MS = 1000 / ORIENTATION_MIN_HZ;
 const ORIENTATION_RATE_SAMPLES = 4;
 
 const DIRECTION_ORDER = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+/** @type {Record<string, { dx: number; dy: number }>} */
+const DIRECTION_DELTA = {
+  N: { dx: 0, dy: -1 },
+  NE: { dx: 1, dy: -1 },
+  E: { dx: 1, dy: 0 },
+  SE: { dx: 1, dy: 1 },
+  S: { dx: 0, dy: 1 },
+  SW: { dx: -1, dy: 1 },
+  W: { dx: -1, dy: 0 },
+  NW: { dx: -1, dy: -1 },
+};
 
 /** @param {number} deg */
 function normalizeDeg(deg) {
@@ -27,16 +42,6 @@ function snapHeading(deg) {
   if (snapped === 360) snapped = 0;
   const idx = Math.round(snapped / 45) % 8;
   return { degrees: snapped, label: DIRECTION_ORDER[idx] };
-}
-
-/**
- * Unit forward on XZ grid from compass-style degrees (0 = N → -Z, 90 = E → +X).
- * Matches N, NE, E, … as specified (e.g. N = { x: 0, z: -1 }).
- * @param {number} degrees
- */
-function forwardFromDegrees(degrees) {
-  const r = (degrees * Math.PI) / 180;
-  return { x: Math.sin(r), z: -Math.cos(r) };
 }
 
 export class InputManager {
@@ -134,11 +139,12 @@ export class InputManager {
     return this._snappedDirection;
   }
 
-  /** @returns {{ x: number; z: number }} Unit forward on the XZ grid for the snapped direction. */
-  get forwardVector() {
-    const idx = DIRECTION_ORDER.indexOf(this._snappedDirection);
-    const deg = idx >= 0 ? idx * 45 : 0;
-    return forwardFromDegrees(deg);
+  /**
+   * One grid step for current facing (x right, y down).
+   * @returns {{ dx: number; dy: number }}
+   */
+  get movementDelta() {
+    return DIRECTION_DELTA[this._snappedDirection] ?? DIRECTION_DELTA.N;
   }
 
   _attachSensors() {
