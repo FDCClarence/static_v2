@@ -6,14 +6,6 @@ import { parseCell } from '../engine/GridEngine.js';
 const CELL_METERS = 1.5;
 const RAMP_S = 0.016;
 
-/** @param {number} a */
-function normalizeAngleRad(a) {
-  let x = a;
-  while (x > Math.PI) x -= 2 * Math.PI;
-  while (x < -Math.PI) x += 2 * Math.PI;
-  return x;
-}
-
 /**
  * @typedef {object} SpatialSourceOptions
  * @property {AudioContext} audioContext
@@ -49,6 +41,7 @@ export class SpatialSource {
     /** @type {{ x: number; y: number }} */
     this._gridPos = parseCell(cell);
 
+    this._preSplitMerger = audioContext.createChannelMerger(2);
     this._splitter = audioContext.createChannelSplitter(2);
     this._gainL = audioContext.createGain();
     this._gainR = audioContext.createGain();
@@ -65,6 +58,7 @@ export class SpatialSource {
     this._delayL.delayTime.value = 0;
     this._delayR.delayTime.value = 0;
 
+    this._preSplitMerger.connect(this._splitter);
     this._splitter.connect(this._gainL, 0);
     this._splitter.connect(this._gainR, 1);
     this._gainL.connect(this._filterL);
@@ -123,20 +117,25 @@ export class SpatialSource {
     const ly = listenerGridPos.y;
     const sx = this._gridPos.x;
     const sy = this._gridPos.y;
+    const dx = sx - lx;
+    const dy = sy - ly;
 
-    const sourceAngle = Math.atan2(sy - ly, sx - lx);
-    const headingRad = listenerHeadingDeg * (Math.PI / 180);
-    const angleTo = normalizeAngleRad(sourceAngle - headingRad);
-    const cosAngle = Math.cos(angleTo);
+    // Convert source vector to compass bearing: 0=north, 90=east, 180=south, 270=west.
+    const sourceBearingDeg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+    const relativeDeg = (sourceBearingDeg - listenerHeadingDeg + 360) % 360;
+    const relativeRad = (relativeDeg * Math.PI) / 180;
+
+    // rightness: -1 hard-left, +1 hard-right. frontness: -1 behind, +1 ahead.
+    const rightness = Math.sin(relativeRad);
+    const frontness = Math.cos(relativeRad);
 
     const vol = this._baseVolume * this._userVolume;
-    const leftG = vol * (0.4 + ((cosAngle + 1) / 2) * 0.6);
-    const rightG = vol * (0.4 + ((-cosAngle + 1) / 2) * 0.6);
-    const cutoff = 800 + ((cosAngle + 1) / 2) * 3200;
-    const delayAmt = (1 - Math.abs(cosAngle)) * 0.0006;
-    const sinA = Math.sin(angleTo);
-    const delayL = sinA < 0 ? delayAmt : 0;
-    const delayR = sinA >= 0 ? delayAmt : 0;
+    const leftG = vol * Math.sqrt((1 - rightness) / 2);
+    const rightG = vol * Math.sqrt((1 + rightness) / 2);
+    const cutoff = 800 + ((frontness + 1) / 2) * 3200;
+    const delayAmt = Math.abs(rightness) * 0.0005;
+    const delayL = rightness > 0 ? delayAmt : 0;
+    const delayR = rightness < 0 ? delayAmt : 0;
 
     this._ramp(this._gainL.gain, leftG);
     this._ramp(this._gainR.gain, rightG);
@@ -174,7 +173,10 @@ export class SpatialSource {
   attachStream(inputNode, dispose) {
     this.stop();
     this._streamDispose = dispose;
-    inputNode.connect(this._splitter);
+    // Duplicate the incoming stream to both channels before the splitter stage.
+    // This preserves the requested chain while keeping mono sources fully audible.
+    inputNode.connect(this._preSplitMerger, 0, 0);
+    inputNode.connect(this._preSplitMerger, 0, 1);
   }
 
   play() {
@@ -182,7 +184,8 @@ export class SpatialSource {
     const src = this.audioContext.createBufferSource();
     src.buffer = this.soundBuffer;
     src.loop = this.loop;
-    src.connect(this._splitter);
+    src.connect(this._preSplitMerger, 0, 0);
+    src.connect(this._preSplitMerger, 0, 1);
     src.onended = () => {
       if (this._bufferSource === src) {
         this._bufferSource = null;

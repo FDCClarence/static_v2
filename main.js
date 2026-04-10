@@ -22,6 +22,7 @@ import { gameEvents } from './src/engine/EventEmitter.js';
 const LEVEL_IDS = ['level_01'];
 const levelDataByIdPromise = loadAllLevelData(LEVEL_IDS);
 let currentLevelIndex = 0;
+let activeKeyStaticSource = null;
 
 const gameScreen = new GameScreen();
 const gameOverScreen = new GameOverScreen();
@@ -55,6 +56,11 @@ gameEvents.on('LEVEL_EXITED', async () => {
   }
   currentLevelIndex = nextLevelIndex;
   await startLevel(currentLevelIndex);
+});
+
+gameEvents.on('KEY_COLLECTED', () => {
+  audioEngine.removeStaticSource(activeKeyStaticSource);
+  activeKeyStaticSource = null;
 });
 
 const permissionScreen = new PermissionScreen();
@@ -106,6 +112,8 @@ async function startLevel(levelIndex) {
   const allLevels = await levelDataByIdPromise;
   const levelData = allLevels[levelId];
   if (!levelData) return;
+  audioEngine.clearStaticSources();
+  activeKeyStaticSource = null;
   gridEngine.loadLevel(levelData);
 
   const keyObject = Array.isArray(levelData.objects)
@@ -113,5 +121,5 @@ async function startLevel(levelIndex) {
     : null;
   if (!keyObject) return;
   const keyCell = parseCell(keyObject.cell);
-  audioEngine.createStaticSource(keyCell.x, keyCell.y);
+  activeKeyStaticSource = audioEngine.createStaticSource(keyCell.x, keyCell.y);
 }

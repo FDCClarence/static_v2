@@ -80,6 +80,8 @@ export class AudioEngine {
     this._roomPresetMap = null;
     /** @type {string | null} */
     this._pendingRoomPreset = null;
+    /** @type {Set<SpatialSource>} */
+    this._staticSources = new Set();
   }
 
   init() {
@@ -126,6 +128,34 @@ export class AudioEngine {
    */
   setListenerOrientation(headingDegrees) {
     this.headingDeg = normalizeDeg(headingDegrees);
+  }
+
+  /**
+   * Sync listener transform in Resonance Audio space.
+   * @param {{ x: number; y: number }} gridPos
+   * @param {number} headingDegrees
+   */
+  setListenerTransform(gridPos, headingDegrees) {
+    this.setListenerOrientation(headingDegrees);
+    const ra = this.resonanceAudio;
+    if (!ra || !gridPos) return;
+
+    const mx = Number(gridPos.x) * 1.5;
+    const mz = Number(gridPos.y) * 1.5;
+    const headingRad = (this.headingDeg * Math.PI) / 180;
+    const fx = Math.sin(headingRad);
+    const fz = -Math.cos(headingRad);
+
+    try {
+      if (typeof ra.setListenerPosition === 'function') {
+        ra.setListenerPosition(mx, 0, mz);
+      }
+      if (typeof ra.setListenerOrientation === 'function') {
+        ra.setListenerOrientation(fx, 0, fz, 0, 1, 0);
+      }
+    } catch {
+      /* best-effort: keep running even if SDK surface varies by build */
+    }
   }
 
   /**
@@ -215,8 +245,34 @@ export class AudioEngine {
 
     spatial.attachStream(gain, dispose);
     osc.start(0);
+    this._staticSources.add(spatial);
 
     return spatial;
+  }
+
+  /**
+   * Keep static sources (e.g. key hiss) synced with listener movement/heading.
+   * @param {{ x: number; y: number }} listenerGridPos
+   * @param {number} listenerHeadingDeg
+   */
+  updateStaticSourceFilters(listenerGridPos, listenerHeadingDeg) {
+    for (const source of this._staticSources) {
+      source.updateDirectionalFilter(listenerGridPos, listenerHeadingDeg);
+    }
+  }
+
+  /** @param {SpatialSource | null | undefined} source */
+  removeStaticSource(source) {
+    if (!source) return;
+    source.stop();
+    this._staticSources.delete(source);
+  }
+
+  clearStaticSources() {
+    for (const source of this._staticSources) {
+      source.stop();
+    }
+    this._staticSources.clear();
   }
 }
 

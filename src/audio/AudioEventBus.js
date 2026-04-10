@@ -291,7 +291,8 @@ export class AudioEventBus {
     const im = this._inputManager;
     if (!im || !audioContext) return;
     void audioContext.resume().catch(() => {});
-    audioEngine.setListenerOrientation(im.heading);
+    audioEngine.setListenerTransform(playerAudioGrid, im.heading);
+    audioEngine.updateStaticSourceFilters(playerAudioGrid, im.heading);
     this._refreshAllDirectional();
   }
 
