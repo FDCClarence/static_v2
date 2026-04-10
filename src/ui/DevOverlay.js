@@ -13,6 +13,9 @@ const HUD_H = 32;
 const PAD = 40;
 const HUD_PAD_X = 12;
 const LABEL_MARGIN = 24;
+const PLAYER_ACCENT = '#6ad9ff';
+const OBJECT_ACCENT = '#ffd166';
+const GRID_STROKE = 'rgba(255, 255, 255, 0.09)';
 
 /** @param {number} deg */
 function normalizeDeg(deg) {
@@ -173,13 +176,27 @@ export class DevOverlay {
     const blockTop = PAD + (contentAvailH - (LABEL_MARGIN + gridPxH)) / 2;
     const gridOriginX = blockLeft + LABEL_MARGIN;
     const gridOriginY = blockTop + LABEL_MARGIN;
+    const gridRadius = Math.max(8, Math.floor(cellSize * 0.2));
 
     const px = this._playerPos;
     const ex = px?.x ?? -1;
     const ey = px?.y ?? -1;
 
+    // Grid container card for a cleaner, modern frame.
+    ctx.save();
+    this._roundedRect(ctx, gridOriginX - 8, gridOriginY - 8, gridPxW + 16, gridPxH + 16, gridRadius + 4);
+    const panelGrad = ctx.createLinearGradient(0, gridOriginY - 8, 0, gridOriginY + gridPxH + 8);
+    panelGrad.addColorStop(0, 'rgba(26, 26, 26, 0.9)');
+    panelGrad.addColorStop(1, 'rgba(10, 10, 10, 0.95)');
+    ctx.fillStyle = panelGrad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+
     ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.fillStyle = '#555';
+    ctx.fillStyle = '#7a7a7a';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     for (let col = 0; col < gridW; col++) {
@@ -206,42 +223,73 @@ export class DevOverlay {
         const isPlayer = gx === ex && gy === ey;
         const kind = this._cellKind(cell, isPlayer);
 
+        const inset = 1;
+        const inner = cellSize - inset * 2;
         if (kind === 'player') {
-          ctx.fillStyle = '#0a2a0a';
-          ctx.fillRect(0, 0, cellSize, cellSize);
-          ctx.strokeStyle = '#00ff44';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(1, 1, cellSize - 2, cellSize - 2);
+          const pGrad = ctx.createLinearGradient(0, inset, 0, inset + inner);
+          pGrad.addColorStop(0, 'rgba(42, 62, 72, 0.98)');
+          pGrad.addColorStop(1, 'rgba(18, 30, 36, 0.98)');
+          ctx.fillStyle = pGrad;
+          ctx.fillRect(inset, inset, inner, inner);
+          ctx.strokeStyle = PLAYER_ACCENT;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(inset + 0.75, inset + 0.75, inner - 1.5, inner - 1.5);
+          if (inner > 6) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(inset + 1.5, inset + 1.5, inner - 3, inner - 3);
+            ctx.clip();
+            const shine = ctx.createLinearGradient(0, inset, 0, inset + inner * 0.6);
+            shine.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
+            shine.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = shine;
+            ctx.fillRect(inset + 1.5, inset + 1.5, inner - 3, Math.max(2, inner * 0.45));
+            ctx.restore();
+          }
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(inset + 1.5, inset + 1.5, inner - 3, inner - 3);
+          ctx.restore();
         } else if (kind === 'wall') {
-          ctx.fillStyle = '#333';
-          ctx.fillRect(0, 0, cellSize, cellSize);
-          ctx.strokeStyle = '#444';
+          const wGrad = ctx.createLinearGradient(0, inset, 0, inset + inner);
+          wGrad.addColorStop(0, '#2f2f2f');
+          wGrad.addColorStop(1, '#222');
+          ctx.fillStyle = wGrad;
+          ctx.fillRect(inset, inset, inner, inner);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
           ctx.lineWidth = 1;
-          ctx.strokeRect(0.5, 0.5, cellSize - 1, cellSize - 1);
+          ctx.strokeRect(inset + 0.5, inset + 0.5, inner - 1, inner - 1);
         } else if (kind === 'object') {
-          ctx.fillStyle = '#1a1a2e';
-          ctx.fillRect(0, 0, cellSize, cellSize);
-          ctx.strokeStyle = '#2a2a5e';
+          const oGrad = ctx.createLinearGradient(0, inset, 0, inset + inner);
+          oGrad.addColorStop(0, '#2b2618');
+          oGrad.addColorStop(1, '#1b170f');
+          ctx.fillStyle = oGrad;
+          ctx.fillRect(inset, inset, inner, inner);
+          ctx.strokeStyle = 'rgba(255, 209, 102, 0.38)';
           ctx.lineWidth = 1;
-          ctx.strokeRect(0.5, 0.5, cellSize - 1, cellSize - 1);
+          ctx.strokeRect(inset + 0.5, inset + 0.5, inner - 1, inner - 1);
         } else {
-          ctx.fillStyle = '#111';
-          ctx.fillRect(0, 0, cellSize, cellSize);
-          ctx.strokeStyle = '#222';
+          const fGrad = ctx.createLinearGradient(0, inset, 0, inset + inner);
+          fGrad.addColorStop(0, '#151515');
+          fGrad.addColorStop(1, '#0f0f0f');
+          ctx.fillStyle = fGrad;
+          ctx.fillRect(inset, inset, inner, inner);
+          ctx.strokeStyle = GRID_STROKE;
           ctx.lineWidth = 1;
-          ctx.strokeRect(0.5, 0.5, cellSize - 1, cellSize - 1);
+          ctx.strokeRect(inset + 0.5, inset + 0.5, inner - 1, inner - 1);
         }
 
         if (kind === 'wall') {
           ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-          ctx.fillStyle = '#444';
+          ctx.fillStyle = '#666';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('█', cellSize / 2, cellSize / 2);
         } else if (kind === 'object') {
           const abbrev = this._cellAbbrev(cell);
           ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-          ctx.fillStyle = '#6666ff';
+          ctx.fillStyle = OBJECT_ACCENT;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(abbrev, cellSize / 2, cellSize / 2);
@@ -249,7 +297,7 @@ export class DevOverlay {
 
         if (this._creatureAt(gx, gy)) {
           ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-          ctx.fillStyle = '#ff4444';
+          ctx.fillStyle = '#d0d0d0';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('C', cellSize / 2, cellSize / 2);
@@ -267,19 +315,23 @@ export class DevOverlay {
           const rad = this._hasGyroHeading
             ? (this._gyroHeadingDeg * Math.PI) / 180
             : FACING_TO_RAD[this._facingDirection] ?? 0;
-          const inset = 6;
+          const inset = 8;
           const cx = cellSize / 2;
           const cy = cellSize / 2;
           const reach = cellSize / 2 - inset;
           ctx.save();
           ctx.translate(cx, cy);
           ctx.rotate(rad);
-          ctx.fillStyle = '#00ff44';
+          ctx.fillStyle = PLAYER_ACCENT;
           ctx.beginPath();
           ctx.moveTo(0, -reach);
-          ctx.lineTo(-reach * 0.55, reach * 0.45);
-          ctx.lineTo(reach * 0.55, reach * 0.45);
+          ctx.lineTo(-reach * 0.52, reach * 0.36);
+          ctx.lineTo(reach * 0.52, reach * 0.36);
           ctx.closePath();
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(0, 0, Math.max(2, reach * 0.22), 0, Math.PI * 2);
+          ctx.fillStyle = '#e8f8ff';
           ctx.fill();
           ctx.restore();
         }
@@ -298,8 +350,16 @@ export class DevOverlay {
    */
   _drawHud(ctx, cssW, cssH) {
     const y0 = cssH - HUD_H;
-    ctx.fillStyle = '#000';
+    const grad = ctx.createLinearGradient(0, y0, 0, cssH);
+    grad.addColorStop(0, 'rgba(18, 18, 18, 0.94)');
+    grad.addColorStop(1, 'rgba(6, 6, 6, 0.98)');
+    ctx.fillStyle = grad;
     ctx.fillRect(0, y0, cssW, HUD_H);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.beginPath();
+    ctx.moveTo(0, y0 + 0.5);
+    ctx.lineTo(cssW, y0 + 0.5);
+    ctx.stroke();
 
     const px = this._playerPos;
     const playerStr =
@@ -314,7 +374,7 @@ export class DevOverlay {
     const line = `PLAYER: ${playerStr}  |  FACING: ${this._facingDirection}  |  CREATURES: ${creatureCount}  |  STATE: ${stateStr}`;
 
     ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#ededed';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(line, HUD_PAD_X, y0 + HUD_H / 2);
@@ -397,6 +457,29 @@ export class DevOverlay {
       if (typeof a === 'string' && a.length > 0) return a.toUpperCase();
     }
     return '?';
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} w
+   * @param {number} h
+   * @param {number} r
+   */
+  _roundedRect(ctx, x, y, w, h, r) {
+    const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.arcTo(x + w, y, x + w, y + radius, radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.arcTo(x + w, y + h, x + w - radius, y + h, radius);
+    ctx.lineTo(x + radius, y + h);
+    ctx.arcTo(x, y + h, x, y + h - radius, radius);
+    ctx.lineTo(x, y + radius);
+    ctx.arcTo(x, y, x + radius, y, radius);
+    ctx.closePath();
   }
 }
 

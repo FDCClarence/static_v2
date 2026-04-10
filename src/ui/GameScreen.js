@@ -85,20 +85,26 @@ export class GameScreen {
       if (IS_DEV) {
         css += `
         .game-screen--dev .game-screen__stage {
-          top: 44px;
+          top: 54px;
         }
 
         .game-screen__dev-bar {
           position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 44px;
-          background: rgba(0, 0, 0, 0.7);
+          top: 10px;
+          left: 12px;
+          right: 12px;
+          height: 38px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 12px;
+          background: linear-gradient(180deg, rgba(24, 24, 24, 0.9), rgba(8, 8, 8, 0.86));
+          box-shadow:
+            0 14px 36px rgba(0, 0, 0, 0.45),
+            inset 0 1px 0 rgba(255, 255, 255, 0.04);
+          backdrop-filter: blur(8px);
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0 16px;
+          padding: 0 12px 0 14px;
           z-index: 100;
           box-sizing: border-box;
           -webkit-user-select: none;
@@ -107,67 +113,83 @@ export class GameScreen {
 
         .game-screen__dev-title {
           margin: 0;
-          font-size: 11px;
-          letter-spacing: 0.15em;
+          font-size: 10px;
+          letter-spacing: 0.16em;
+          text-transform: uppercase;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          color: #ff4444;
+          color: rgba(255, 255, 255, 0.76);
+          text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
         }
 
         .game-screen__dev-toggle-wrap {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 8px;
+          padding: 2px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .game-screen__dev-toggle-label {
-          font-size: 11px;
+          font-size: 10px;
+          letter-spacing: 0.08em;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          min-width: 28px;
+          min-width: 30px;
           text-align: right;
-          transition: color 200ms ease;
+          transition: color 160ms ease;
         }
 
         .game-screen__dev-toggle-label--off {
-          color: #444;
+          color: #8a8a8a;
         }
 
         .game-screen__dev-toggle-label--on {
-          color: #ff4444;
+          color: #efefef;
         }
 
         .game-screen__dev-toggle {
           position: relative;
-          width: 40px;
-          height: 22px;
+          width: 42px;
+          height: 24px;
           padding: 0;
-          border: 1px solid #333;
-          border-radius: 11px;
-          background: transparent;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 999px;
+          background: linear-gradient(180deg, #242424, #151515);
           cursor: pointer;
           flex-shrink: 0;
           box-sizing: border-box;
+          transition: border-color 180ms ease, background 180ms ease;
         }
 
         .game-screen__dev-toggle:focus-visible {
-          outline: 2px solid #ff4444;
+          outline: 2px solid rgba(255, 255, 255, 0.55);
           outline-offset: 2px;
         }
 
         .game-screen__dev-toggle-knob {
           position: absolute;
           top: 50%;
-          left: 2px;
+          left: 3px;
           width: 16px;
           height: 16px;
           margin-top: -8px;
           border-radius: 50%;
-          background: #ccc;
-          transition: transform 200ms ease;
+          background: linear-gradient(180deg, #f6f6f6, #bcbcbc);
+          box-shadow:
+            0 1px 4px rgba(0, 0, 0, 0.42),
+            inset 0 1px 0 rgba(255, 255, 255, 0.6);
+          transition: transform 180ms ease;
           pointer-events: none;
         }
 
         .game-screen__dev-toggle--on .game-screen__dev-toggle-knob {
-          transform: translateX(20px);
+          transform: translateX(18px);
+        }
+
+        .game-screen__dev-toggle--on {
+          border-color: rgba(255, 255, 255, 0.34);
+          background: linear-gradient(180deg, #353535, #1f1f1f);
         }
 
         .game-screen__dev-canvas {
