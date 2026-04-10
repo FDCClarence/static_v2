@@ -20,6 +20,12 @@ function assetUrl(file) {
   return new URL(`../../audio/${file}`, import.meta.url).href;
 }
 
+/** @param {string} file */
+function publicSfxUrl(file) {
+  if (typeof window === 'undefined') return `assets/sfx/${file}`;
+  return new URL(`assets/sfx/${file}`, document.baseURI).href;
+}
+
 /** Optional decode URLs (add files under /public/audio/). */
 const URLS = {
   footstep: {
@@ -41,13 +47,13 @@ const URLS = {
   },
 };
 const SFX_URLS = {
-  walkingWood: '/assets/sfx/walking-wood.mp3',
-  keyJingle: '/assets/sfx/key-jingle.mp3',
-  attemptOpenLockedDoor: '/assets/sfx/attempt-open-locked-door.mp3',
-  openDoorWithKey: '/assets/sfx/open-door-with-key.mp3',
-  wallBump: '/assets/sfx/wall-bump.mp3',
-  backroomsBgMusic: '/assets/sfx/backrooms-bg-music.mp3',
-  landingPageMusic: '/assets/sfx/landing-page-music.mp3',
+  walkingWood: publicSfxUrl('walking-wood.mp3'),
+  keyJingle: publicSfxUrl('key-jingle.mp3'),
+  attemptOpenLockedDoor: publicSfxUrl('attempt-open-locked-door.mp3'),
+  openDoorWithKey: publicSfxUrl('open-door-with-key.mp3'),
+  wallBump: publicSfxUrl('wall-bump.mp3'),
+  backroomsBgMusic: publicSfxUrl('backrooms-bg-music.mp3'),
+  landingPageMusic: publicSfxUrl('landing-page-music.mp3'),
 };
 const MUSIC_FADE_S = 0.8;
 
