@@ -460,6 +460,30 @@ export class AudioEventBus {
     if (sfx) this._playSfx(sfx);
   }
 
+  /** Landing-page BEGIN confirmation cue. */
+  playBeginCueAtCell(cell) {
+    const ctx = audioContext;
+    const ra = audioEngine.resonanceAudio;
+    const creepy = this._sfxBuffers.attemptOpenLockedDoor;
+    if (!ctx || !ra || !creepy || typeof cell !== 'string') return;
+
+    const src = new SpatialSource({
+      audioContext: ctx,
+      resonanceAudio: ra,
+      cell,
+      soundBuffer: creepy,
+      loop: false,
+      baseVolume: 1,
+    });
+    src.onPlaybackEnded = () => {
+      this._directionalSources.delete(src);
+      src.onPlaybackEnded = null;
+    };
+    this._directionalSources.add(src);
+    src.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
+    void ctx.resume().then(() => src.play());
+  }
+
   /**
    * @param {AudioBuffer} buffer
    * @param {{ gain?: number; playbackRate?: number }} [opts]

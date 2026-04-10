@@ -42,6 +42,15 @@ landingPage.onStart = async () => {
   audioEventBus.startBgMusic();
   currentLevelIndex = 0;
   await startLevel(currentLevelIndex);
+  const allLevels = await levelDataByIdPromise;
+  const levelId = LEVEL_IDS[currentLevelIndex];
+  const levelData = levelId ? allLevels[levelId] : null;
+  const lockedDoor = Array.isArray(levelData?.objects)
+    ? levelData.objects.find((obj) => obj && obj.type === 'door-locked' && typeof obj.cell === 'string')
+    : null;
+  if (lockedDoor?.cell) {
+    audioEventBus.playBeginCueAtCell(lockedDoor.cell);
+  }
 };
 
 gameOverScreen.onBackToLanding = () => {
