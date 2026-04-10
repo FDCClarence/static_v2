@@ -69,6 +69,8 @@ export class InputManager {
     this._smoothedHeading = 0;
     /** @type {string} */
     this._snappedDirection = 'N';
+    /** @type {number | null} Sensor heading captured as "north" reference for current level. */
+    this._headingNorthReference = null;
 
     /** Circular EMA state (unit circle projection of heading). */
     this._smoothSin = null;
@@ -156,6 +158,22 @@ export class InputManager {
     this._attachSensors();
   }
 
+  /**
+   * Recalibrate heading so current device orientation is treated as north.
+   * Intended to be called at level start.
+   */
+  calibrateNorthForLevelStart() {
+    this._headingNorthReference = null;
+    this._rawHeading = 0;
+    this._smoothedHeading = 0;
+    this._smoothSin = 0;
+    this._smoothCos = 1;
+    if (this._snappedDirection !== 'N') {
+      this._snappedDirection = 'N';
+      this.emitter.emit('FACING_CHANGED', { facingDirection: 'N' });
+    }
+  }
+
   /** @returns {number} Raw heading in degrees (0–360). */
   get heading() {
     return normalizeDeg(this._rawHeading);
@@ -227,8 +245,13 @@ export class InputManager {
    * @param {DeviceOrientationEvent} e
    */
   _applyOrientationHeading(e) {
-    const headingDeg = this._headingFromOrientationEvent(e);
+    let headingDeg = this._headingFromOrientationEvent(e);
     if (headingDeg == null) return;
+
+    if (this._headingNorthReference == null) {
+      this._headingNorthReference = headingDeg;
+    }
+    headingDeg = normalizeDeg(headingDeg - this._headingNorthReference);
 
     this._rawHeading = headingDeg;
     this._applySmoothing(this._rawHeading);

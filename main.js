@@ -30,6 +30,7 @@ const landingPage = new LandingPage();
 landingPage.onStart = async () => {
   landingPage.hide();
   gameScreen.show();
+  inputManager.calibrateNorthForLevelStart();
   const levelData = await levelDataPromise;
   gridEngine.loadLevel(levelData);
   const keyCell = parseCell('E2');
