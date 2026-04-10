@@ -5,6 +5,19 @@ import { parseCell } from '../engine/GridEngine.js';
 
 const CELL_METERS = 1.5;
 const RAMP_S = 0.016;
+const DEG_TO_RAD = Math.PI / 180;
+const MAX_ITD_S = 0.00065;
+const MIN_DISTANCE_ATTEN = 0.08;
+
+/** @param {number} v @param {number} min @param {number} max */
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v));
+}
+
+/** @param {number} deg */
+function normalizeDeg(deg) {
+  return ((deg % 360) + 360) % 360;
+}
 
 /**
  * @typedef {object} SpatialSourceOptions
@@ -112,20 +125,47 @@ export class SpatialSource {
   updateDirectionalFilter(listenerGridPos, listenerHeadingDeg) {
     this._lastListenerGridPos = { x: listenerGridPos.x, y: listenerGridPos.y };
     this._lastListenerHeadingDeg = listenerHeadingDeg;
-    // Resonance Audio already handles true 3D direction and distance using
-    // source/listener transforms. Keep this pre-processing chain neutral to
-    // avoid double-panning artifacts at mid/far distances.
     const vol = this._baseVolume * this._userVolume;
-    const leftG = vol;
-    const rightG = vol;
-    const cutoff = 3200;
-    const delayL = 0;
-    const delayR = 0;
+
+    const dx = this._gridPos.x - listenerGridPos.x;
+    const dy = this._gridPos.y - listenerGridPos.y;
+    const distCells = Math.hypot(dx, dy);
+    // Explicit XY-grid falloff so loudness maps to tile distance.
+    const distanceAtten = Math.max(MIN_DISTANCE_ATTEN, 1 / (1 + distCells * distCells * 0.45));
+
+    // 0deg means "in front of listener", +90deg means "to the right".
+    const bearingDeg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+    const relDeg = normalizeDeg(bearingDeg - listenerHeadingDeg);
+    const signedRelDeg = relDeg > 180 ? relDeg - 360 : relDeg;
+    const relRad = signedRelDeg * DEG_TO_RAD;
+
+    // Stronger L/R cues at distance make gyro navigation easier without UI.
+    const width = clamp(0.28 + distCells * 0.18, 0.28, 1);
+    const pan = clamp(Math.sin(relRad) * width, -1, 1);
+    const absPan = Math.abs(pan);
+    const frontness = Math.cos(relRad); // >0 front hemisphere, <0 behind
+    const behindMix = clamp((-frontness + 1) * 0.5, 0, 1);
+
+    const nearEar = 1 + absPan * 0.28;
+    const farEar = 1 - absPan * 0.55;
+    const leftG = vol * distanceAtten * (pan >= 0 ? farEar : nearEar);
+    const rightG = vol * distanceAtten * (pan >= 0 ? nearEar : farEar);
+
+    // Tiny interaural delay helps source direction "snap" while rotating.
+    const delayL = pan > 0 ? pan * MAX_ITD_S : 0;
+    const delayR = pan < 0 ? -pan * MAX_ITD_S : 0;
+
+    const baseCutoff = clamp(5600 - distCells * 520, 1400, 5600);
+    const behindFactor = 1 - 0.35 * behindMix;
+    const nearCutoff = baseCutoff * behindFactor;
+    const farCutoff = nearCutoff * (1 - absPan * 0.33);
+    const leftCutoff = pan >= 0 ? farCutoff : nearCutoff;
+    const rightCutoff = pan >= 0 ? nearCutoff : farCutoff;
 
     this._ramp(this._gainL.gain, leftG);
     this._ramp(this._gainR.gain, rightG);
-    this._ramp(this._filterL.frequency, cutoff);
-    this._ramp(this._filterR.frequency, cutoff);
+    this._ramp(this._filterL.frequency, leftCutoff);
+    this._ramp(this._filterR.frequency, rightCutoff);
     this._ramp(this._delayL.delayTime, delayL);
     this._ramp(this._delayR.delayTime, delayR);
   }
