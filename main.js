@@ -15,12 +15,26 @@ import './src/entities/behaviors/GuardBehavior.js';
 import './src/entities/behaviors/AmbushBehavior.js';
 import './src/ui/GameScreen.js';
 import './src/ui/DevOverlay.js';
+import { PermissionScreen } from './src/ui/PermissionScreen.js';
+import { LandingPage } from './src/ui/LandingPage.js';
 
 const canvas = document.getElementById('game');
-const overlay = document.getElementById('tap-start');
 
 const inputManager = new InputManager();
 inputManager.init();
+
+const landingPage = new LandingPage();
+landingPage.onStart = () => {
+  landingPage.hide();
+  void beginFromUserGesture();
+};
+
+const permissionScreen = new PermissionScreen();
+permissionScreen.onGranted = () => {
+  permissionScreen.hide();
+  landingPage.show();
+};
+permissionScreen.show();
 
 function resizeCanvas() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -34,19 +48,5 @@ resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
 async function beginFromUserGesture() {
-  overlay.hidden = true;
   await inputManager.requestPermission();
 }
-
-overlay?.addEventListener('click', () => {
-  void beginFromUserGesture();
-});
-
-overlay?.addEventListener(
-  'touchend',
-  (e) => {
-    e.preventDefault();
-    void beginFromUserGesture();
-  },
-  { passive: false }
-);
