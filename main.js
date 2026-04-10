@@ -3,7 +3,6 @@ import { audioEventBus } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
 import './src/audio/ReverbZones.js';
 import { gridEngine, parseCell } from './src/engine/GridEngine.js';
-import levelData from './src/data/levels/level_01.json' assert { type: 'json' };
 import './src/engine/GameLoop.js';
 import './src/engine/EventEmitter.js';
 import { InputManager } from './src/engine/InputManager.js';
@@ -18,6 +17,8 @@ import { GameScreen } from './src/ui/GameScreen.js';
 import { PermissionScreen } from './src/ui/PermissionScreen.js';
 import { LandingPage } from './src/ui/LandingPage.js';
 
+const levelDataPromise = loadLevelData();
+
 const gameScreen = new GameScreen();
 
 const inputManager = new InputManager();
@@ -26,9 +27,10 @@ audioEngine.init();
 void audioEventBus.init({ inputManager });
 
 const landingPage = new LandingPage();
-landingPage.onStart = () => {
+landingPage.onStart = async () => {
   landingPage.hide();
   gameScreen.show();
+  const levelData = await levelDataPromise;
   gridEngine.loadLevel(levelData);
   const keyCell = parseCell('E2');
   audioEngine.createStaticSource(keyCell.x, keyCell.y);
@@ -54,4 +56,12 @@ window.addEventListener('resize', resizeCanvas);
 async function beginFromUserGesture() {
   await inputManager.requestPermission();
   await audioContext?.resume().catch(() => {});
+}
+
+async function loadLevelData() {
+  const res = await fetch('./src/data/levels/level_01.json', { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Failed to load level data: ${res.status}`);
+  }
+  return res.json();
 }
