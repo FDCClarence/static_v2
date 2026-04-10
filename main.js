@@ -1,5 +1,5 @@
 import { audioEngine } from './src/audio/AudioEngine.js';
-import { audioEventBus } from './src/audio/AudioEventBus.js';
+import { audioEventBus, playerAudioGrid } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
 import './src/audio/ReverbZones.js';
 import { gridEngine, parseCell } from './src/engine/GridEngine.js';
@@ -48,6 +48,16 @@ landingPage.onStart = async () => {
   const lockedDoor = Array.isArray(levelData?.objects)
     ? levelData.objects.find((obj) => obj && obj.type === 'door-locked' && typeof obj.cell === 'string')
     : null;
+  const playerStartCell =
+    levelData && typeof levelData === 'object' && levelData.playerStart && typeof levelData.playerStart === 'object'
+      ? levelData.playerStart.cell
+      : null;
+  if (typeof playerStartCell === 'string') {
+    const spawn = parseCell(playerStartCell);
+    playerAudioGrid.x = spawn.x;
+    playerAudioGrid.y = spawn.y;
+    audioEngine.setListenerTransform(playerAudioGrid, inputManager.heading);
+  }
   if (lockedDoor?.cell) {
     audioEventBus.playBeginCueAtCell(lockedDoor.cell);
   }

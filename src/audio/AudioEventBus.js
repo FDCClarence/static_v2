@@ -473,7 +473,7 @@ export class AudioEventBus {
       cell,
       soundBuffer: creepy,
       loop: false,
-      baseVolume: 0.33,
+      baseVolume: 1.35,
     });
     src.onPlaybackEnded = () => {
       this._directionalSources.delete(src);
