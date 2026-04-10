@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 
-export default {
+export default defineConfig({
+  base: './',
   server: {
     host: true,
     headers: {
@@ -8,4 +9,4 @@ export default {
       'Pragma': 'no-cache'
     }
   }
-}
+});
