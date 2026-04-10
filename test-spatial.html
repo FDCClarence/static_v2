@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Spatial Audio Debug</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #eee; }
+    #grid { display: grid; grid-template-columns: repeat(7, 40px); gap: 2px; margin: 20px 0; }
+    .cell { width: 40px; height: 40px; border: 1px solid #444; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+    .wall { background: #333; }
+    .player { background: #4a9eff; font-weight: bold; }
+    .key { background: #ff9d00; }
+    .door { background: #ff4444; }
+    button { padding: 10px; margin: 5px; }
+    #info { background: #2a2a2a; padding: 15px; margin: 10px 0; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h2>Spatial Audio Debug - Level 1</h2>
+  <div id="info">
+    <div>Player: <span id="player-pos">E6</span> | Heading: <span id="heading">0</span>°</div>
+    <div>Key: F3 (grid: 5,2) | Door: B1 (grid: 1,0)</div>
+    <div>Expected door bearing from E6: -31° (NW)</div>
+  </div>
+  
+  <div>
+    <button onclick="setHeading(0)">North (0°)</button>
+    <button onclick="setHeading(90)">East (90°)</button>
+    <button onclick="setHeading(180)">South (180°)</button>
+    <button onclick="setHeading(270)">West (270°)</button>
+    <button onclick="setHeading(-31)">NW (-31° toward door)</button>
+  </div>
+  
+  <div id="grid"></div>
+  
+  <div>
+    <button onclick="testDoorSound()">Test spatial loop at door (B1)</button>
+    <button onclick="stopSound()">Stop</button>
+  </div>
+  
+  <div id="debug" style="margin-top: 20px; font-size: 12px;"></div>
+
+  <script type="module">
+    import { audioEngine, audioContext } from './src/audio/AudioEngine.js';
+    import { playerAudioGrid } from './src/audio/AudioEventBus.js';
+
+    function makeTestLoopBuffer() {
+      const ctx = audioContext;
+      if (!ctx) return null;
+      const rate = ctx.sampleRate;
+      const len = Math.floor(rate * 0.25);
+      const buf = ctx.createBuffer(1, len, rate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        data[i] = Math.sin((i / rate) * 440 * 2 * Math.PI) * 0.08;
+      }
+      return buf;
+    }
+
+    audioEngine.init();
+    
+    let currentHeading = 0;
+    let doorSource = null;
+    
+    // Draw grid
+    const grid = document.getElementById('grid');
+    const levelGrid = [
+      [1, 0, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1]
+    ];
+    
+    for (let y = 0; y < 7; y++) {
+      for (let x = 0; x < 7; x++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        if (levelGrid[y][x] === 1) cell.classList.add('wall');
+        if (x === 4 && y === 5) { cell.classList.add('player'); cell.textContent = 'P'; }
+        if (x === 5 && y === 2) { cell.classList.add('key'); cell.textContent = 'K'; }
+        if (x === 1 && y === 0) { cell.classList.add('door'); cell.textContent = 'D'; }
+        grid.appendChild(cell);
+      }
+    }
+    
+    // Set player at E6 (4, 5)
+    playerAudioGrid.x = 4;
+    playerAudioGrid.y = 5;
+    
+    window.setHeading = function(deg) {
+      currentHeading = deg;
+      document.getElementById('heading').textContent = deg;
+      audioEngine.setListenerTransform(playerAudioGrid, deg);
+      
+      const debug = document.getElementById('debug');
+      const rad = (deg * Math.PI) / 180;
+      const fx = Math.sin(rad);
+      const fz = -Math.cos(rad);
+      debug.innerHTML = `
+        <div>Listener Position: (${playerAudioGrid.x * 1.5}, 0, ${playerAudioGrid.y * 1.5})</div>
+        <div>Listener Forward: (${fx.toFixed(3)}, 0, ${fz.toFixed(3)})</div>
+        <div>Door Position: (1.5, 0, 0)</div>
+        <div>Vector to door: dx=${1 - 4}=${-3}, dy=${0 - 5}=${-5}</div>
+        <div>Expected door azimuth: ${(Math.atan2(-3, -(-5)) * 180 / Math.PI).toFixed(1)}°</div>
+      `;
+    };
+    
+    window.testDoorSound = function() {
+      window.stopSound();
+      const buf = makeTestLoopBuffer();
+      doorSource = buf ? audioEngine.createLoopingSpatialSource(1, 0, buf) : null;
+      if (doorSource) {
+        doorSource.updateDirectionalFilter(playerAudioGrid, currentHeading);
+      }
+    };
+
+    window.stopSound = function() {
+      if (doorSource) {
+        audioEngine.removeSpatialLoopSource(doorSource);
+        doorSource = null;
+      }
+    };
+    
+    // Initialize
+    setHeading(0);
+  </script>
+</body>
+</html>

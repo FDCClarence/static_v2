@@ -370,14 +370,22 @@ export class DevOverlay {
     const stateStr =
       (this._gridState && typeof this._gridState.state === 'string' && this._gridState.state) ||
       'PLAYING';
+    const facingDeg = this._facingAngleDeg();
 
-    const line = `PLAYER: ${playerStr}  |  FACING: ${this._facingDirection}  |  CREATURES: ${creatureCount}  |  STATE: ${stateStr}`;
+    const line = `PLAYER: ${playerStr}  |  FACING: ${this._facingDirection} (${facingDeg.toFixed(1)}deg)  |  CREATURES: ${creatureCount}  |  STATE: ${stateStr}`;
 
     ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
     ctx.fillStyle = '#ededed';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(line, HUD_PAD_X, y0 + HUD_H / 2);
+  }
+
+  /** @returns {number} */
+  _facingAngleDeg() {
+    if (this._hasGyroHeading) return normalizeDeg(this._gyroHeadingDeg);
+    const rad = FACING_TO_RAD[this._facingDirection] ?? 0;
+    return normalizeDeg((rad * 180) / Math.PI);
   }
 
   _creatureCount() {

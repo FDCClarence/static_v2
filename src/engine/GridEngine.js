@@ -156,13 +156,27 @@ export class GridEngine {
     const nx = this._playerPos.x + delta.dx;
     const ny = this._playerPos.y + delta.dy;
 
+    /** Diagonal-only: if diagonal target is blocked only by map edge or wall, try one cardinal step (slide). */
+    const slide =
+      delta.dx !== 0 &&
+      delta.dy !== 0 &&
+      (!this._inBounds(nx, ny) || this._isWall(nx, ny));
+
     if (!this._inBounds(nx, ny)) {
+      if (slide) {
+        const slid = this._tryDiagonalWallSlide(delta.dx, delta.dy);
+        if (slid) return;
+      }
       this._emitter.emit('PLAYER_BLOCKED', { x: nx, y: ny });
       this._emitGridStateChanged();
       return;
     }
 
     if (this._isWall(nx, ny)) {
+      if (slide) {
+        const slid = this._tryDiagonalWallSlide(delta.dx, delta.dy);
+        if (slid) return;
+      }
       this._emitter.emit('PLAYER_BLOCKED', { x: nx, y: ny, cell: toCell(nx, ny) });
       this._emitGridStateChanged();
       return;
@@ -201,6 +215,45 @@ export class GridEngine {
     });
 
     this._emitGridStateChanged();
+  }
+
+  /**
+   * One-step slide when a diagonal target is only blocked by map edge or wall.
+   * Tries horizontal (along dx) then vertical — first walkable cardinal wins (bounded, no multi-tile drift).
+   * @param {number} dx
+   * @param {number} dy
+   * @returns {boolean}
+   */
+  _tryDiagonalWallSlide(dx, dy) {
+    const px = this._playerPos.x;
+    const py = this._playerPos.y;
+    const candidates = [
+      { nx: px + dx, ny: py },
+      { nx: px, ny: py + dy },
+    ];
+    for (const { nx, ny } of candidates) {
+      if (!this._inBounds(nx, ny) || this._isWall(nx, ny)) continue;
+      const blockingObject = this._blockingObjectAt(nx, ny);
+      if (blockingObject) continue;
+      if (this._creatureAt(nx, ny)) {
+        this._gameState = 'DEAD';
+        this._emitter.emit('PLAYER_DEATH', { cell: toCell(nx, ny), x: nx, y: ny });
+        this._emitGridStateChanged();
+        return true;
+      }
+      this._playerPos.x = nx;
+      this._playerPos.y = ny;
+      this._handlePlayerSteppedOnObject(nx, ny);
+      this._emitter.emit('PLAYER_MOVED', {
+        x: nx,
+        y: ny,
+        cell: toCell(nx, ny),
+        floorType: 'default',
+      });
+      this._emitGridStateChanged();
+      return true;
+    }
+    return false;
   }
 
   interact() {
@@ -304,7 +357,7 @@ export class GridEngine {
     if (obj.type === 'key') {
       this._objectsByKey.delete(objectKey);
       this._hasLevelKey = true;
-      this._unlockDoors();
+      this._unlockDoors(x, y);
       this._emitter.emit('KEY_COLLECTED', { objectId: obj.id, cell: toCell(x, y), x, y });
       return;
     }
@@ -320,7 +373,11 @@ export class GridEngine {
     }
   }
 
-  _unlockDoors() {
+  /**
+   * @param {number} playerX Grid x of player after stepping (KEY_COLLECTED / DOOR_UNLOCKED fire before PLAYER_MOVED).
+   * @param {number} playerY
+   */
+  _unlockDoors(playerX, playerY) {
     for (const [key, obj] of this._objectsByKey) {
       if (obj.type !== 'door-locked') continue;
       this._objectsByKey.set(key, { ...obj, type: 'door-unlocked', devLabel: 'OPN' });
@@ -329,6 +386,8 @@ export class GridEngine {
         cell: toCell(obj.x, obj.y),
         x: obj.x,
         y: obj.y,
+        playerX,
+        playerY,
       });
     }
   }

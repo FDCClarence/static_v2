@@ -11,14 +11,23 @@
     "walkable": false,
     "interactable": true,
     "devLabel": "DR",
-    "sounds": { "interact": "door-locked-rattle" }
+    "sounds": {
+      "interact": "door-locked-rattle",
+      "volume": 1
+    }
   },
   {
     "id": "door-unlocked",
     "walkable": true,
     "interactable": true,
     "devLabel": "DR",
-    "sounds": { "interact": "door-open", "ambient": "door-creak-loop" }
+    "sounds": {
+      "interact": "door-open",
+      "volume": 3.2,
+      "worldLoop": "doorBump",
+      "worldLoopFadeInSec": 2,
+      "worldLoopFadeOutSec": 2
+    }
   },
   {
     "id": "table",
@@ -61,7 +70,10 @@
     "interactable": true,
     "devLabel": "KEY",
     "sounds": {
-      "ambient": "key-static"
+      "volume": 3.2,
+      "worldLoop": "keySound",
+      "worldLoopFadeInSec": 1,
+      "worldLoopFadeOutSec": 1
     }
   },
   {

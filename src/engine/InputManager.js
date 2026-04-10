@@ -12,6 +12,8 @@ const IS_LOCALHOST =
 const IS_DEV_BUILD = Boolean(import.meta?.env?.DEV) || DEV_OVERRIDE || IS_LOCALHOST;
 
 const EMA_FACTOR = 0.15;
+/** Degrees shifted from cardinals toward diagonals at snap boundaries (smoother diagonal intent). */
+const DIAG_SNAP_BIAS_DEG = 7;
 const SWIPE_MIN_UP_PX = 40;
 const SWIPE_MAX_HORIZONTAL_PX = 80;
 const SWIPE_MAX_MS = 400;
@@ -36,13 +38,26 @@ function normalizeDeg(deg) {
 
 /**
  * Nearest 8-way compass label and snapped angle (deg).
+ * Diagonals use slightly wider sectors so near-diagonal headings still count as diagonal (pairs with grid slide).
  * @param {number} deg
  */
 function snapHeading(deg) {
   const a = normalizeDeg(deg);
-  let snapped = Math.round(a / 45) * 45;
+  const d = DIAG_SNAP_BIAS_DEG;
+  const b = [22.5 - d, 67.5 + d, 112.5 - d, 157.5 + d, 202.5 - d, 247.5 + d, 292.5 - d, 337.5 + d];
+  let idx = 0;
+  if (a >= b[7] || a < b[0]) {
+    idx = 0;
+  } else {
+    for (let i = 0; i < 7; i++) {
+      if (a >= b[i] && a < b[i + 1]) {
+        idx = i + 1;
+        break;
+      }
+    }
+  }
+  let snapped = idx * 45;
   if (snapped === 360) snapped = 0;
-  const idx = Math.round(snapped / 45) % 8;
   return { degrees: snapped, label: DIRECTION_ORDER[idx] };
 }
 
@@ -183,6 +198,14 @@ export class InputManager {
   /** @returns {number} Raw heading in degrees (0–360). */
   get heading() {
     return normalizeDeg(this._rawHeading);
+  }
+
+  /**
+   * EMA-smoothed heading (0–360), same value as {@link gameEvents} INPUT_TICK `heading`.
+   * Use for spatial audio with Resonance so listener orientation matches per-source math.
+   */
+  get smoothedHeading() {
+    return normalizeDeg(this._smoothedHeading);
   }
 
   /** @returns {number} Raw heading in degrees (0–360). */

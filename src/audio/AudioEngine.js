@@ -80,8 +80,8 @@ export class AudioEngine {
     this._roomPresetMap = null;
     /** @type {string | null} */
     this._pendingRoomPreset = null;
-    /** @type {Set<SpatialSource>} */
-    this._staticSources = new Set();
+    /** @type {Set<SpatialSource>} Loops managed here for listener/heading updates (see {@link createLoopingSpatialSource}). */
+    this._spatialLoopSources = new Set();
   }
 
   init() {
@@ -132,6 +132,8 @@ export class AudioEngine {
 
   /**
    * Sync listener transform in Resonance Audio space.
+   * Grid: +x=east, +y=south, heading 0=north (decreasing y).
+   * Resonance: +X=right, +Z=back, forward=(fx,0,fz) where fz<0 is forward.
    * @param {{ x: number; y: number }} gridPos
    * @param {number} headingDegrees
    */
@@ -143,8 +145,10 @@ export class AudioEngine {
     const mx = Number(gridPos.x) * 1.5;
     const mz = Number(gridPos.y) * 1.5;
     const headingRad = (this.headingDeg * Math.PI) / 180;
+    // Resonance forward convention: (0,0,-1) is forward (north in our grid).
+    // heading=0 (north) → forward=(0,0,-1); heading=90 (east) → forward=(1,0,0)
     const fx = Math.sin(headingRad);
-    const fz = -Math.cos(headingRad);
+    const fz = Math.cos(headingRad);
 
     try {
       if (typeof ra.setListenerPosition === 'function') {
@@ -187,85 +191,69 @@ export class AudioEngine {
   }
 
   /**
-   * Key-style static / radio noise at a grid cell, spatialized. Loops until {@link SpatialSource#stop}.
+   * Looping spatialized sound at a grid cell (buffer from level/object data).
    * @param {number} gridX
    * @param {number} gridY
+   * @param {AudioBuffer | null | undefined} audioBuffer
+   * @param {{ baseVolume?: number; fadeInSeconds?: number }} [opts]
    * @returns {SpatialSource | null}
    */
-  createStaticSource(gridX, gridY) {
+  createLoopingSpatialSource(gridX, gridY, audioBuffer, opts = {}) {
     const ctx = audioContext;
     const ra = this.resonanceAudio;
-    if (!ctx || !ra) return null;
+    if (!ctx || !ra || !audioBuffer) return null;
 
-    const osc = ctx.createOscillator();
-    /** @type {AudioNode} */
-    let sourceTail = osc;
-    osc.type = 'sawtooth';
-    osc.frequency.value = 80;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 1800;
-    bp.Q.value = 0.5;
-    osc.connect(bp);
-    sourceTail = bp;
+    const baseVolume = typeof opts.baseVolume === 'number' ? opts.baseVolume : 1;
+    const fadeInSeconds = typeof opts.fadeInSeconds === 'number' ? opts.fadeInSeconds : 0;
 
-    const gain = ctx.createGain();
-    gain.gain.value = 0.15;
-    sourceTail.connect(gain);
-
-    const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
     const spatial = new SpatialSource({
       audioContext: ctx,
       resonanceAudio: ra,
       cell: formatCell(gridX, gridY),
-      soundBuffer: silent,
-      loop: false,
-      baseVolume: 1,
+      soundBuffer: audioBuffer,
+      loop: true,
+      baseVolume,
     });
-
-    const dispose = () => {
-      try {
-        osc.stop();
-      } catch {
-        /* already stopped */
-      }
-      try {
-        gain.disconnect();
-      } catch {
-        /* */
-      }
-    };
-
-    spatial.attachStream(gain, dispose);
-    osc.start(0);
-    this._staticSources.add(spatial);
-
+    spatial.play({ fadeInSeconds });
+    this._spatialLoopSources.add(spatial);
     return spatial;
   }
 
   /**
-   * Keep static sources (e.g. key hiss) synced with listener movement/heading.
    * @param {{ x: number; y: number }} listenerGridPos
    * @param {number} listenerHeadingDeg
    */
-  updateStaticSourceFilters(listenerGridPos, listenerHeadingDeg) {
-    for (const source of this._staticSources) {
+  updateSpatialLoopSourceFilters(listenerGridPos, listenerHeadingDeg) {
+    for (const source of this._spatialLoopSources) {
       source.updateDirectionalFilter(listenerGridPos, listenerHeadingDeg);
     }
   }
 
-  /** @param {SpatialSource | null | undefined} source */
-  removeStaticSource(source) {
+  /**
+   * @param {SpatialSource | null | undefined} source
+   * @param {{ fadeOutSeconds?: number }} [opts] When set, source is removed from the set after the fade completes.
+   */
+  removeSpatialLoopSource(source, opts = {}) {
     if (!source) return;
-    source.stop();
-    this._staticSources.delete(source);
+    const fade = typeof opts.fadeOutSeconds === 'number' && opts.fadeOutSeconds > 0 ? opts.fadeOutSeconds : 0;
+    if (fade > 0) {
+      source.stop({
+        fadeOutSeconds: fade,
+        onComplete: () => {
+          this._spatialLoopSources.delete(source);
+        },
+      });
+    } else {
+      source.stop();
+      this._spatialLoopSources.delete(source);
+    }
   }
 
-  clearStaticSources() {
-    for (const source of this._staticSources) {
+  clearSpatialLoopSources() {
+    for (const source of this._spatialLoopSources) {
       source.stop();
     }
-    this._staticSources.clear();
+    this._spatialLoopSources.clear();
   }
 }
 

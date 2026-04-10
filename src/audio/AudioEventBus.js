@@ -9,6 +9,11 @@ import { formatCell, parseCell } from '../engine/GridEngine.js';
 /** Current player cell for panning; game may also set via PLAYER_MOVED payload. */
 export const playerAudioGrid = { x: 0, y: 0 };
 
+/** @param {number} deg */
+function normalizeDeg(deg) {
+  return ((deg % 360) + 360) % 360;
+}
+
 const MASTER_FADE_S = 2;
 const DEATH_RESET_DELAY_S = 3;
 const RAMP_TAIL_S = 0.02;
@@ -86,7 +91,9 @@ const URLS = {
 };
 const SFX_FILES = {
   walkingWood: 'walking-wood.mp3',
-  keyJingle: 'key-jingle.mp3',
+  keyGrab: 'key-grab.mp3',
+  keySound: 'key-sound.mp3',
+  doorBump: 'door-bump.mp3',
   attemptOpenLockedDoor: 'attempt-open-locked-door.mp3',
   openDoorWithKey: 'open-door-with-key.mp3',
   wallBump: 'wall-bump.mp3',
@@ -165,6 +172,32 @@ async function decodeUrl(ctx, url) {
   }
 }
 
+/** Max linear gain from registry `volume` × slot volume (prevents runaway boosts). */
+const REGISTRY_GAIN_CAP = 4;
+
+/**
+ * Linear gain from object registry `sounds`: `volume` × `{slot}Volume` (each defaults to 1 if omitted).
+ * Slots: `worldLoopVolume`, `interactVolume`, `ambientVolume`, `bumpVolume`.
+ * @param {Record<string, unknown> | undefined} sounds
+ * @param {'worldLoop' | 'interact' | 'ambient' | 'bump'} slot
+ */
+function registryGainFromSounds(sounds, slot) {
+  if (!sounds || typeof sounds !== 'object') return 1;
+  const base = typeof sounds.volume === 'number' && Number.isFinite(sounds.volume) ? sounds.volume : 1;
+  const slotKey =
+    slot === 'worldLoop'
+      ? 'worldLoopVolume'
+      : slot === 'interact'
+        ? 'interactVolume'
+        : slot === 'ambient'
+          ? 'ambientVolume'
+          : 'bumpVolume';
+  const slotMul =
+    typeof sounds[slotKey] === 'number' && Number.isFinite(sounds[slotKey]) ? sounds[slotKey] : 1;
+  const g = base * slotMul;
+  return Math.max(0, Math.min(g, REGISTRY_GAIN_CAP));
+}
+
 export class AudioEventBus {
   constructor() {
     /** @type {import('../engine/InputManager.js').InputManager | null} */
@@ -179,6 +212,10 @@ export class AudioEventBus {
     this._ambientById = new Map();
     /** @type {Map<string, SpatialSource>} */
     this._creatureById = new Map();
+    /** @type {Map<string, { source: SpatialSource; fadeOutSec: number }>} Spatial world loops (registry `worldLoop`). */
+    this._worldAmbientLoopsById = new Map();
+    /** @type {Map<string, Record<string, unknown>>} Object `sounds` from registry, keyed by object type id. */
+    this._objectSoundsByTypeId = new Map();
 
     /** @type {SpatialSource | null} */
     this._footstepSource = null;
@@ -206,7 +243,9 @@ export class AudioEventBus {
     /** @type {Record<string, AudioBuffer | null>} */
     this._sfxBuffers = {
       walkingWood: null,
-      keyJingle: null,
+      keyGrab: null,
+      keySound: null,
+      doorBump: null,
       attemptOpenLockedDoor: null,
       openDoorWithKey: null,
       wallBump: null,
@@ -230,6 +269,9 @@ export class AudioEventBus {
     this._deathInProgress = false;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._deathResetTimer = null;
+
+    /** Last smoothed heading used for Resonance (matches INPUT_TICK; not raw gyro). */
+    this._spatialHeading = 0;
 
     this._onInputTick = this._onInputTick.bind(this);
     this._onPlayerMoved = this._onPlayerMoved.bind(this);
@@ -287,14 +329,137 @@ export class AudioEventBus {
     this._masterGain = ctx.createGain();
     this._masterGain.gain.value = 1;
     ra.output.disconnect();
-    ra.output.connect(this._masterGain);
+    
+    // Swap L/R to correct mirrored spatial image from Resonance/Omnitone
+    const split = ctx.createChannelSplitter(2);
+    const swap = ctx.createChannelMerger(2);
+    ra.output.connect(split);
+    split.connect(swap, 0, 1); // L → R
+    split.connect(swap, 1, 0); // R → L
+    swap.connect(this._masterGain);
+    
     this._masterGain.connect(ctx.destination);
     this._masterPatched = true;
+  }
+
+  /**
+   * Register ambient asset URLs from object registry (`sounds.ambient` → `audio/<id>.wav`).
+   */
+  async _registerObjectAmbientUrlsFromRegistry() {
+    const registryUrl = new URL('../data/objects/registry.json', import.meta.url);
+    try {
+      const res = await fetch(registryUrl);
+      if (!res.ok) return;
+      const reg = await res.json();
+      if (!Array.isArray(reg)) return;
+      for (const obj of reg) {
+        if (!obj || typeof obj !== 'object' || typeof obj.id !== 'string') continue;
+        const sounds = obj.sounds;
+        this._objectSoundsByTypeId.set(obj.id, sounds && typeof sounds === 'object' ? sounds : {});
+        if (!sounds || typeof sounds !== 'object') continue;
+        const amb = sounds.ambient;
+        if (typeof amb === 'string' && amb && !(amb in URLS.ambient)) {
+          URLS.ambient[amb] = assetUrl(`${amb}.wav`);
+        }
+      }
+    } catch {
+      /* registry optional at dev time */
+    }
+  }
+
+  /**
+   * @param {string} objectTypeId Registry object id (e.g. `key`, `door-unlocked`).
+   * @returns {string | null} `sounds.ambient` id when present.
+   */
+  getObjectAmbientSoundKey(objectTypeId) {
+    const sounds = this._objectSoundsByTypeId.get(objectTypeId);
+    const k = sounds && typeof sounds === 'object' ? sounds.ambient : null;
+    return typeof k === 'string' && k ? k : null;
+  }
+
+  /**
+   * @param {string} objectTypeId
+   * @param {'worldLoop' | 'interact' | 'ambient' | 'bump'} slot
+   * @returns {number}
+   */
+  getRegistrySoundGain(objectTypeId, slot) {
+    return registryGainFromSounds(this._objectSoundsByTypeId.get(objectTypeId), slot);
+  }
+
+  /**
+   * @param {string} objectTypeId
+   * @returns {{ sfxKey: string; fadeInSec: number; fadeOutSec: number; gain: number } | null}
+   */
+  getObjectWorldLoopConfig(objectTypeId) {
+    const sounds = this._objectSoundsByTypeId.get(objectTypeId);
+    if (!sounds || typeof sounds !== 'object') return null;
+    const sfxKey = sounds.worldLoop;
+    if (typeof sfxKey !== 'string' || !sfxKey) return null;
+    return {
+      sfxKey,
+      fadeInSec: typeof sounds.worldLoopFadeInSec === 'number' ? sounds.worldLoopFadeInSec : 0,
+      fadeOutSec: typeof sounds.worldLoopFadeOutSec === 'number' ? sounds.worldLoopFadeOutSec : 0,
+      gain: registryGainFromSounds(sounds, 'worldLoop'),
+    };
+  }
+
+  /**
+   * Spatial looping SFX at a grid cell (`public/assets/sfx`), fades from registry.
+   * @param {string} trackId
+   * @param {number} gridX
+   * @param {number} gridY
+   * @param {string} registryObjectTypeId e.g. `key`, `door-unlocked`
+   */
+  playRegistryObjectWorldLoop(trackId, gridX, gridY, registryObjectTypeId) {
+    const cfg = this.getObjectWorldLoopConfig(registryObjectTypeId);
+    if (!cfg) return;
+    const buf = this._sfxBuffers[cfg.sfxKey];
+    if (!buf) return;
+    this.stopWorldAmbientLoop(trackId);
+    const src = audioEngine.createLoopingSpatialSource(gridX, gridY, buf, {
+      baseVolume: cfg.gain,
+      fadeInSeconds: cfg.fadeInSec,
+    });
+    if (src) {
+      this._worldAmbientLoopsById.set(trackId, { source: src, fadeOutSec: cfg.fadeOutSec });
+      if (this._busInitialized) this.syncSpatialAudio();
+    }
+  }
+
+  /**
+   * @param {string} trackId
+   * @param {number} gridX
+   * @param {number} gridY
+   * @param {string} soundKey Ambient id from object registry (decoded into `_ambientBuffers`).
+   */
+  playWorldAmbientLoop(trackId, gridX, gridY, soundKey) {
+    this.stopWorldAmbientLoop(trackId);
+    const buf = this._ambientBuffers[soundKey];
+    if (!buf) return;
+    const src = audioEngine.createLoopingSpatialSource(gridX, gridY, buf, { baseVolume: 1 });
+    if (src) {
+      this._worldAmbientLoopsById.set(trackId, { source: src, fadeOutSec: 0 });
+      if (this._busInitialized) this.syncSpatialAudio();
+    }
+  }
+
+  /** @param {string} trackId */
+  stopWorldAmbientLoop(trackId) {
+    const entry = this._worldAmbientLoopsById.get(trackId);
+    if (!entry) return;
+    this._worldAmbientLoopsById.delete(trackId);
+    audioEngine.removeSpatialLoopSource(entry.source, { fadeOutSeconds: entry.fadeOutSec });
+  }
+
+  clearWorldAmbientLoops() {
+    this._worldAmbientLoopsById.clear();
+    audioEngine.clearSpatialLoopSources();
   }
 
   async _loadBuffers() {
     const ctx = audioContext;
     if (!ctx) return;
+    await this._registerObjectAmbientUrlsFromRegistry();
     if (AUDIO_ASSETS_ENABLED) {
       const entries = Object.entries(URLS.footstep);
       await Promise.all(
@@ -307,17 +472,17 @@ export class AudioEventBus {
       this._buffers.death = await decodeUrl(ctx, URLS.death);
 
       await Promise.all(
-        Object.entries(URLS.ambient).map(async ([key, url]) => {
-          this._ambientBuffers[key] = await decodeUrl(ctx, url);
-        }),
-      );
-
-      await Promise.all(
         Object.entries(URLS.creature).map(async ([key, url]) => {
           this._creatureBuffers[key] = await decodeUrl(ctx, url);
         }),
       );
     }
+
+    await Promise.all(
+      Object.entries(URLS.ambient).map(async ([key, url]) => {
+        this._ambientBuffers[key] = await decodeUrl(ctx, url);
+      }),
+    );
 
     const sfxBase = await resolveSfxBase();
     await Promise.all(
@@ -375,10 +540,44 @@ export class AudioEventBus {
   _refreshAllDirectional(headingOverride) {
     const im = this._inputManager;
     if (!im) return;
-    const heading = typeof headingOverride === 'number' ? headingOverride : im.heading;
+    const heading =
+      typeof headingOverride === 'number' ? headingOverride : this._spatialHeading;
     for (const src of this._directionalSources) {
       src.updateDirectionalFilter(playerAudioGrid, heading);
     }
+  }
+
+  /**
+   * Single call site: listener transform, managed spatial loops, and directional sources
+   * on the same heading + grid (avoids raw/smoothed mismatch when gyro moves fast).
+   * @param {number} headingDeg
+   */
+  _syncSpatialAudio(headingDeg) {
+    const h = normalizeDeg(headingDeg);
+    this._spatialHeading = h;
+    audioEngine.setListenerTransform(playerAudioGrid, h);
+    audioEngine.updateSpatialLoopSourceFilters(playerAudioGrid, h);
+    this._refreshAllDirectional(h);
+  }
+
+  /** @returns {number} */
+  _headingForSpatial() {
+    const im = this._inputManager;
+    return normalizeDeg(im?.smoothedHeading ?? this._spatialHeading);
+  }
+
+  /**
+   * Re-apply listener, spatial loops, and directional sources for current `playerAudioGrid`.
+   * Use when the grid was updated outside `PLAYER_MOVED` (e.g. key pickup: door unlock runs before that event).
+   * @param {number} [headingDegOverride] Use raw/instant heading once (pickup while gyro is moving; smoothed lags).
+   */
+  syncSpatialAudio(headingDegOverride) {
+    if (!this._busInitialized) return;
+    const h =
+      typeof headingDegOverride === 'number' && Number.isFinite(headingDegOverride)
+        ? normalizeDeg(headingDegOverride)
+        : this._headingForSpatial();
+    this._syncSpatialAudio(h);
   }
 
   _onInputTick(detail) {
@@ -388,10 +587,8 @@ export class AudioEventBus {
     const tickHeading =
       detail && typeof detail === 'object' && typeof /** @type {{ heading?: unknown }} */ (detail).heading === 'number'
         ? /** @type {{ heading: number }} */ (detail).heading
-        : im.heading;
-    audioEngine.setListenerTransform(playerAudioGrid, tickHeading);
-    audioEngine.updateStaticSourceFilters(playerAudioGrid, tickHeading);
-    this._refreshAllDirectional(tickHeading);
+        : im.smoothedHeading;
+    this._syncSpatialAudio(tickHeading);
   }
 
   _onPlayerMoved(detail) {
@@ -400,6 +597,8 @@ export class AudioEventBus {
       playerAudioGrid.x = g.x;
       playerAudioGrid.y = g.y;
     }
+    this._syncSpatialAudio(this._headingForSpatial());
+
     const walkSfx = this._sfxBuffers.walkingWood;
     if (walkSfx) {
       this._playSfx(walkSfx, { gain: 0.2, playbackRate: 1.5 });
@@ -420,7 +619,7 @@ export class AudioEventBus {
       if (this._footstepSource) this._footstepSource.onPlaybackEnded = null;
     };
     this._directionalSources.add(this._footstepSource);
-    this._footstepSource.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
+    this._footstepSource.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
     void audioContext?.resume().then(() => this._footstepSource?.play());
   }
 
@@ -429,7 +628,9 @@ export class AudioEventBus {
       const objectType = /** @type {{ objectType?: unknown }} */ (detail).objectType;
       if (objectType === 'door-locked') {
         const lockedSfx = this._sfxBuffers.attemptOpenLockedDoor;
-        if (lockedSfx) this._playSfx(lockedSfx);
+        if (lockedSfx) {
+          this._playSfx(lockedSfx, { gain: this.getRegistrySoundGain('door-locked', 'interact') });
+        }
         return;
       }
     }
@@ -440,24 +641,55 @@ export class AudioEventBus {
     }
     const g = gridFromDetail(detail);
     if (!g || !this._bumpSource) return;
+    const bumpObjType =
+      detail && typeof detail === 'object' && typeof /** @type {{ objectType?: unknown }} */ (detail).objectType === 'string'
+        ? /** @type {{ objectType: string }} */ (detail).objectType
+        : null;
+    const bumpGain = bumpObjType ? this.getRegistrySoundGain(bumpObjType, 'bump') : 1;
+    this._bumpSource.setBaseVolume(bumpGain);
     this._bumpSource.setPosition(formatCell(g.x, g.y));
     this._bumpSource.onPlaybackEnded = () => {
       this._directionalSources.delete(this._bumpSource);
-      if (this._bumpSource) this._bumpSource.onPlaybackEnded = null;
+      if (this._bumpSource) {
+        this._bumpSource.setBaseVolume(1);
+        this._bumpSource.onPlaybackEnded = null;
+      }
     };
     this._directionalSources.add(this._bumpSource);
-    this._bumpSource.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
+    this._bumpSource.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
     void audioContext?.resume().then(() => this._bumpSource?.play());
   }
 
   _onKeyCollected() {
-    const sfx = this._sfxBuffers.keyJingle;
-    if (sfx) this._playSfx(sfx);
+    const sfx = this._sfxBuffers.keyGrab;
+    if (sfx) {
+      this._playSfx(sfx, { gain: this.getRegistrySoundGain('key', 'interact') });
+    }
   }
 
   _onLevelExited() {
+    this._clearSpatialWorldSources();
     const sfx = this._sfxBuffers.openDoorWithKey;
-    if (sfx) this._playSfx(sfx, { gain: 1.5, swapStereo: true });
+    if (sfx) {
+      const rg = this.getRegistrySoundGain('door-unlocked', 'interact');
+      this._playSfx(sfx, { gain: 1.5 * rg, swapStereo: true });
+    }
+  }
+
+  /** Stop looping world spatial audio (level hunt cues, object ambients, creatures, engine spatial loops). */
+  _clearSpatialWorldSources() {
+    for (const src of this._ambientById.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
+    }
+    this._ambientById.clear();
+    for (const src of this._creatureById.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
+    }
+    this._creatureById.clear();
+    this._worldAmbientLoopsById.clear();
+    audioEngine.clearSpatialLoopSources();
   }
 
   /** Landing-page BEGIN confirmation cue. */
@@ -480,7 +712,7 @@ export class AudioEventBus {
       src.onPlaybackEnded = null;
     };
     this._directionalSources.add(src);
-    src.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
+    src.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
     void ctx.resume().then(() => src.play());
   }
 
@@ -528,7 +760,7 @@ export class AudioEventBus {
     const raw = /** @type {{ objects?: unknown }} */ (detail).objects;
     if (!Array.isArray(raw)) return;
 
-    /** @type {Map<string, { cell: string; soundKey: string }>} */
+    /** @type {Map<string, { cell: string; soundKey: string; objectType: string | null }>} */
     const next = new Map();
     for (const o of raw) {
       if (!o || typeof o !== 'object') continue;
@@ -538,7 +770,8 @@ export class AudioEventBus {
       if (!g) continue;
       const soundKey =
         typeof ob.soundKey === 'string' && ob.soundKey in URLS.ambient ? ob.soundKey : 'default';
-      next.set(ob.id, { cell: formatCell(g.x, g.y), soundKey });
+      const objectType = typeof ob.type === 'string' ? ob.type : null;
+      next.set(ob.id, { cell: formatCell(g.x, g.y), soundKey, objectType });
     }
 
     for (const [id, src] of this._ambientById) {
@@ -554,6 +787,10 @@ export class AudioEventBus {
       const ambBuf = this._ambientBuffers[spec.soundKey] ?? this._ambientBuffers.default;
       if (!ambBuf) continue;
 
+      const ambGain = spec.objectType
+        ? registryGainFromSounds(this._objectSoundsByTypeId.get(spec.objectType), 'ambient')
+        : 1;
+
       if (!src) {
         src = new SpatialSource({
           audioContext: ctx,
@@ -561,7 +798,7 @@ export class AudioEventBus {
           cell: spec.cell,
           soundBuffer: ambBuf,
           loop: true,
-          baseVolume: 1,
+          baseVolume: ambGain,
         });
         this._ambientById.set(id, src);
         this._directionalSources.add(src);
@@ -569,6 +806,7 @@ export class AudioEventBus {
       } else {
         src.setPosition(spec.cell);
         src.setSoundBuffer(ambBuf);
+        src.setBaseVolume(ambGain);
       }
     }
 
@@ -688,17 +926,7 @@ export class AudioEventBus {
 
     this._rampMasterGain(1, RAMP_TAIL_S);
 
-    for (const src of this._ambientById.values()) {
-      src.stop();
-      this._directionalSources.delete(src);
-    }
-    this._ambientById.clear();
-
-    for (const src of this._creatureById.values()) {
-      src.stop();
-      this._directionalSources.delete(src);
-    }
-    this._creatureById.clear();
+    this._clearSpatialWorldSources();
 
     if (this._deathDirectSource) {
       try {

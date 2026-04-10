@@ -1,5 +1,6 @@
 /**
- * Stereo directional chain into Resonance Audio (grid-based 2D positions).
+ * Stereo feed into Resonance Audio (grid-based world positions).
+ * Panning comes only from Resonance; this chain stays gain-matched L/R.
  */
 import { parseCell } from '../engine/GridEngine.js';
 
@@ -71,8 +72,14 @@ export class SpatialSource {
     this._resSource = resonanceAudio.createSource();
     this._merger.connect(this._resSource.input);
 
+    /** Mono envelope before splitter (buffer path only; streams connect straight to {@link _preSplitMerger}). */
+    this._envelopeGain = audioContext.createGain();
+    this._envelopeGain.gain.value = 1;
+
     /** @type {AudioBufferSourceNode | null} */
     this._bufferSource = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._fadeOutTimer = null;
     /** @type {(() => void) | null} Cleanup for {@link attachStream} (stop nodes, disconnect). */
     this._streamDispose = null;
     /** @type {(() => void) | null} Fired when a non-looping buffer finishes. */
@@ -112,22 +119,16 @@ export class SpatialSource {
   updateDirectionalFilter(listenerGridPos, listenerHeadingDeg) {
     this._lastListenerGridPos = { x: listenerGridPos.x, y: listenerGridPos.y };
     this._lastListenerHeadingDeg = listenerHeadingDeg;
-    // Resonance Audio already handles true 3D direction and distance using
-    // source/listener transforms. Keep this pre-processing chain neutral to
-    // avoid double-panning artifacts at mid/far distances.
-    const vol = this._baseVolume * this._userVolume;
-    const leftG = vol;
-    const rightG = vol;
-    const cutoff = 3200;
-    const delayL = 0;
-    const delayR = 0;
 
-    this._ramp(this._gainL.gain, leftG);
-    this._ramp(this._gainR.gain, rightG);
+    this._syncResonancePosition();
+    const vol = this._baseVolume * this._userVolume;
+    const cutoff = 3200;
+    this._ramp(this._gainL.gain, vol);
+    this._ramp(this._gainR.gain, vol);
     this._ramp(this._filterL.frequency, cutoff);
     this._ramp(this._filterR.frequency, cutoff);
-    this._ramp(this._delayL.delayTime, delayL);
-    this._ramp(this._delayR.delayTime, delayR);
+    this._ramp(this._delayL.delayTime, 0);
+    this._ramp(this._delayR.delayTime, 0);
   }
 
   /**
@@ -135,7 +136,7 @@ export class SpatialSource {
    */
   setPosition(cell) {
     this._gridPos = parseCell(cell);
-    this._syncResonancePosition();
+    this.updateDirectionalFilter(this._lastListenerGridPos, this._lastListenerHeadingDeg);
   }
 
   /**
@@ -158,22 +159,35 @@ export class SpatialSource {
   attachStream(inputNode, dispose) {
     this.stop();
     this._streamDispose = dispose;
-    // Duplicate the incoming stream to both channels before the splitter stage.
-    // This preserves the requested chain while keeping mono sources fully audible.
     inputNode.connect(this._preSplitMerger, 0, 0);
     inputNode.connect(this._preSplitMerger, 0, 1);
   }
 
-  play() {
+  /**
+   * @param {{ fadeInSeconds?: number }} [options]
+   */
+  play(options = {}) {
     this.stop();
+    const fadeIn = typeof options.fadeInSeconds === 'number' && options.fadeInSeconds > 0 ? options.fadeInSeconds : 0;
     const src = this.audioContext.createBufferSource();
     src.buffer = this.soundBuffer;
     src.loop = this.loop;
-    src.connect(this._preSplitMerger, 0, 0);
-    src.connect(this._preSplitMerger, 0, 1);
+    this._envelopeGain.connect(this._preSplitMerger, 0, 0);
+    this._envelopeGain.connect(this._preSplitMerger, 0, 1);
+    src.connect(this._envelopeGain);
+    const g = this._envelopeGain.gain;
+    const t = this.audioContext.currentTime;
+    g.cancelScheduledValues(t);
+    if (fadeIn > 0) {
+      g.setValueAtTime(0, t);
+      g.linearRampToValueAtTime(1, t + fadeIn);
+    } else {
+      g.setValueAtTime(1, t);
+    }
     src.onended = () => {
       if (this._bufferSource === src) {
         this._bufferSource = null;
+        this._detachEnvelopeFromMerger();
         this.onPlaybackEnded?.();
       }
     };
@@ -181,11 +195,15 @@ export class SpatialSource {
     src.start(0);
   }
 
-  stop() {
-    if (this._streamDispose) {
-      this._streamDispose();
-      this._streamDispose = null;
+  _detachEnvelopeFromMerger() {
+    try {
+      this._envelopeGain.disconnect();
+    } catch {
+      /* */
     }
+  }
+
+  _hardStopBufferSource() {
     if (!this._bufferSource) return;
     try {
       this._bufferSource.stop();
@@ -194,6 +212,52 @@ export class SpatialSource {
     }
     this._bufferSource.disconnect();
     this._bufferSource = null;
+    this._detachEnvelopeFromMerger();
+    const t = this.audioContext.currentTime;
+    this._envelopeGain.gain.cancelScheduledValues(t);
+    this._envelopeGain.gain.setValueAtTime(1, t);
+  }
+
+  /**
+   * @param {{ fadeOutSeconds?: number; onComplete?: () => void }} [options]
+   */
+  stop(options = {}) {
+    if (this._fadeOutTimer) {
+      clearTimeout(this._fadeOutTimer);
+      this._fadeOutTimer = null;
+    }
+    if (this._streamDispose) {
+      this._streamDispose();
+      this._streamDispose = null;
+    }
+    const fadeOut =
+      typeof options.fadeOutSeconds === 'number' && options.fadeOutSeconds > 0 ? options.fadeOutSeconds : 0;
+    if (!this._bufferSource) {
+      options.onComplete?.();
+      return;
+    }
+    if (fadeOut <= 0) {
+      this._hardStopBufferSource();
+      options.onComplete?.();
+      return;
+    }
+    const ctx = this.audioContext;
+    const now = ctx.currentTime;
+    const g = this._envelopeGain.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    g.linearRampToValueAtTime(0, now + fadeOut);
+    const src = this._bufferSource;
+    const ms = fadeOut * 1000 + 100;
+    this._fadeOutTimer = setTimeout(() => {
+      this._fadeOutTimer = null;
+      if (this._bufferSource !== src) {
+        options.onComplete?.();
+        return;
+      }
+      this._hardStopBufferSource();
+      options.onComplete?.();
+    }, ms);
   }
 
   /**
@@ -201,6 +265,14 @@ export class SpatialSource {
    */
   setVolume(v) {
     this._userVolume = v;
+    this.updateDirectionalFilter(this._lastListenerGridPos, this._lastListenerHeadingDeg);
+  }
+
+  /**
+   * @param {number} v
+   */
+  setBaseVolume(v) {
+    this._baseVolume = v;
     this.updateDirectionalFilter(this._lastListenerGridPos, this._lastListenerHeadingDeg);
   }
 }

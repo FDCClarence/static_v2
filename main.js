@@ -21,9 +21,11 @@ import { gameEvents } from './src/engine/EventEmitter.js';
 
 const LEVEL_IDS = ['level_01'];
 const levelDataByIdPromise = loadAllLevelData(LEVEL_IDS);
+/** One spatial world-loop slot: key cell → door cell after unlock (see registry `worldLoop`). */
+const LEVEL_OBJECT_WORLD_LOOP_ID = 'level-object-world-loop';
 let currentLevelIndex = 0;
-let activeKeyStaticSource = null;
-let transferredStaticToDoorOnPickup = false;
+/** After door unlock, `KEY_COLLECTED` must not stop the new door loop. */
+let suppressKeyCollectWorldStop = false;
 
 const gameScreen = new GameScreen();
 const gameOverScreen = new GameOverScreen();
@@ -56,7 +58,7 @@ landingPage.onStart = async () => {
     const spawn = parseCell(playerStartCell);
     playerAudioGrid.x = spawn.x;
     playerAudioGrid.y = spawn.y;
-    audioEngine.setListenerTransform(playerAudioGrid, inputManager.heading);
+    audioEngine.setListenerTransform(playerAudioGrid, inputManager.smoothedHeading);
   }
   if (lockedDoor?.cell) {
     audioEventBus.playBeginCueAtCell(lockedDoor.cell);
@@ -72,6 +74,7 @@ gameOverScreen.onBackToLanding = () => {
 };
 
 gameEvents.on('LEVEL_EXITED', async () => {
+  suppressKeyCollectWorldStop = false;
   const nextLevelIndex = currentLevelIndex + 1;
   if (nextLevelIndex >= LEVEL_IDS.length) {
     audioEventBus.stopBgMusic();
@@ -84,26 +87,26 @@ gameEvents.on('LEVEL_EXITED', async () => {
 });
 
 gameEvents.on('KEY_COLLECTED', () => {
-  if (transferredStaticToDoorOnPickup) {
-    transferredStaticToDoorOnPickup = false;
+  if (suppressKeyCollectWorldStop) {
+    suppressKeyCollectWorldStop = false;
     return;
   }
-  audioEngine.removeStaticSource(activeKeyStaticSource);
-  activeKeyStaticSource = null;
+  audioEventBus.stopWorldAmbientLoop(LEVEL_OBJECT_WORLD_LOOP_ID);
 });
 
 gameEvents.on('DOOR_UNLOCKED', (detail) => {
   if (!detail || typeof detail !== 'object') return;
-  const d = /** @type {{ x?: unknown; y?: unknown }} */ (detail);
-  if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
-  transferredStaticToDoorOnPickup = true;
-  audioEngine.removeStaticSource(activeKeyStaticSource);
-  activeKeyStaticSource = audioEngine.createStaticSource(d.x, d.y);
-  if (activeKeyStaticSource) {
-    // Keep door static spatial cue aligned with current listener state immediately.
-    audioEngine.setListenerTransform(playerAudioGrid, inputManager.heading);
-    activeKeyStaticSource.updateDirectionalFilter(playerAudioGrid, inputManager.heading);
+  const d = /** @type {{ x?: unknown; y?: unknown; playerX?: unknown; playerY?: unknown }} */ (detail);
+  // Emitted before PLAYER_MOVED; keep listener grid aligned with the pickup step.
+  if (typeof d.playerX === 'number' && typeof d.playerY === 'number') {
+    playerAudioGrid.x = d.playerX;
+    playerAudioGrid.y = d.playerY;
   }
+  if (typeof d.x === 'number' && typeof d.y === 'number') {
+    suppressKeyCollectWorldStop = true;
+    audioEventBus.playRegistryObjectWorldLoop(LEVEL_OBJECT_WORLD_LOOP_ID, d.x, d.y, 'door-unlocked');
+  }
+  audioEventBus.syncSpatialAudio(inputManager.heading);
 });
 
 const permissionScreen = new PermissionScreen();
@@ -156,9 +159,8 @@ async function startLevel(levelIndex) {
   const allLevels = await levelDataByIdPromise;
   const levelData = allLevels[levelId];
   if (!levelData) return;
-  audioEngine.clearStaticSources();
-  transferredStaticToDoorOnPickup = false;
-  activeKeyStaticSource = null;
+  audioEventBus.clearWorldAmbientLoops();
+  suppressKeyCollectWorldStop = false;
   gridEngine.loadLevel(levelData);
 
   const keyObject = Array.isArray(levelData.objects)
@@ -166,5 +168,5 @@ async function startLevel(levelIndex) {
     : null;
   if (!keyObject) return;
   const keyCell = parseCell(keyObject.cell);
-  activeKeyStaticSource = audioEngine.createStaticSource(keyCell.x, keyCell.y);
+  audioEventBus.playRegistryObjectWorldLoop(LEVEL_OBJECT_WORLD_LOOP_ID, keyCell.x, keyCell.y, 'key');
 }
