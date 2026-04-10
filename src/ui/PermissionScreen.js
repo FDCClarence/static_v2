@@ -108,19 +108,14 @@ export class PermissionScreen {
   async _onAllow() {
     this._button.disabled = true;
 
-    try {
-      const ctx = new AudioContext();
-      await ctx.suspend();
-    } catch {
-      /* still continue */
-    }
-
     let motionDenied = false;
+    let motionPromptAttempted = false;
     try {
       if (
         typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function'
       ) {
+        motionPromptAttempted = true;
         // true = include magnetometer; needed for compass / webkitCompassHeading (MDN).
         let result;
         try {
@@ -139,6 +134,7 @@ export class PermissionScreen {
         typeof DeviceMotionEvent !== 'undefined' &&
         typeof DeviceMotionEvent.requestPermission === 'function'
       ) {
+        motionPromptAttempted = true;
         const result = await DeviceMotionEvent.requestPermission();
         if (result !== 'granted') motionDenied = true;
       }
@@ -146,8 +142,22 @@ export class PermissionScreen {
       /* still continue */
     }
 
+    // Perform audio unlock only after motion permission prompts so the original
+    // tap remains a valid user gesture for iOS sensor permission APIs.
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (typeof Ctx === 'function') {
+        const ctx = new Ctx();
+        await ctx.suspend();
+      }
+    } catch {
+      /* still continue */
+    }
+
     if (motionDenied) {
       this._button.textContent = 'Motion access denied — some features unavailable';
+    } else if (!motionPromptAttempted) {
+      this._button.textContent = 'Continuing without motion prompt';
     }
 
     this.onGranted?.();
