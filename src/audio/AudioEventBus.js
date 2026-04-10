@@ -20,11 +20,14 @@ const RAMP_TAIL_S = 0.02;
 const AUDIO_ASSETS_ENABLED =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('audio') === '1';
 
-/** Decode WAVs from `public/audio/` (copied to site root on build; works on GitHub Pages `base`). */
+/** Decode WAVs from `public/audio/` (Vite: BASE_URL; plain ESM has no import.meta.env). */
 function assetUrl(file) {
-  const base = import.meta.env.BASE_URL;
-  const prefix = base.endsWith('/') ? base : `${base}/`;
-  return `${prefix}audio/${file}`;
+  const base = import.meta.env?.BASE_URL;
+  if (typeof base === 'string' && base !== '') {
+    const prefix = base.endsWith('/') ? base : `${base}/`;
+    return `${prefix}audio/${file}`;
+  }
+  return new URL(`../../audio/${file}`, import.meta.url).href;
 }
 
 const SFX_BASE_CANDIDATES = ['assets/sfx', 'public/assets/sfx'];
