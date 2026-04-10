@@ -112,30 +112,15 @@ export class SpatialSource {
   updateDirectionalFilter(listenerGridPos, listenerHeadingDeg) {
     this._lastListenerGridPos = { x: listenerGridPos.x, y: listenerGridPos.y };
     this._lastListenerHeadingDeg = listenerHeadingDeg;
-
-    const lx = listenerGridPos.x;
-    const ly = listenerGridPos.y;
-    const sx = this._gridPos.x;
-    const sy = this._gridPos.y;
-    const dx = sx - lx;
-    const dy = sy - ly;
-
-    // Convert source vector to compass bearing: 0=north, 90=east, 180=south, 270=west.
-    const sourceBearingDeg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
-    const relativeDeg = (sourceBearingDeg - listenerHeadingDeg + 360) % 360;
-    const relativeRad = (relativeDeg * Math.PI) / 180;
-
-    // rightness: -1 hard-left, +1 hard-right. frontness: -1 behind, +1 ahead.
-    const rightness = Math.sin(relativeRad);
-    const frontness = Math.cos(relativeRad);
-
+    // Resonance Audio already handles true 3D direction and distance using
+    // source/listener transforms. Keep this pre-processing chain neutral to
+    // avoid double-panning artifacts at mid/far distances.
     const vol = this._baseVolume * this._userVolume;
-    const leftG = vol * Math.sqrt((1 - rightness) / 2);
-    const rightG = vol * Math.sqrt((1 + rightness) / 2);
-    const cutoff = 800 + ((frontness + 1) / 2) * 3200;
-    const delayAmt = Math.abs(rightness) * 0.0005;
-    const delayL = rightness > 0 ? delayAmt : 0;
-    const delayR = rightness < 0 ? delayAmt : 0;
+    const leftG = vol;
+    const rightG = vol;
+    const cutoff = 3200;
+    const delayL = 0;
+    const delayR = 0;
 
     this._ramp(this._gainL.gain, leftG);
     this._ramp(this._gainR.gain, rightG);

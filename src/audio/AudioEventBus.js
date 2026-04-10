@@ -40,6 +40,12 @@ const URLS = {
     default: assetUrl('creature_default.wav'),
   },
 };
+const SFX_URLS = {
+  walkingWood: '/assets/sfx/walking-wood.mp3',
+  keyJingle: '/assets/sfx/key-jingle.mp3',
+  attemptOpenLockedDoor: '/assets/sfx/attempt-open-locked-door.mp3',
+  openDoorWithKey: '/assets/sfx/open-door-with-key.mp3',
+};
 
 /** Map arbitrary floorType strings to footstep asset keys. */
 const FLOOR_TYPE_ALIASES = {
@@ -149,6 +155,13 @@ export class AudioEventBus {
     this._ambientBuffers = {};
     /** @type {Record<string, AudioBuffer | null>} */
     this._creatureBuffers = {};
+    /** @type {Record<string, AudioBuffer | null>} */
+    this._sfxBuffers = {
+      walkingWood: null,
+      keyJingle: null,
+      attemptOpenLockedDoor: null,
+      openDoorWithKey: null,
+    };
 
     /** @type {boolean} */
     this._deathInProgress = false;
@@ -158,6 +171,8 @@ export class AudioEventBus {
     this._onInputTick = this._onInputTick.bind(this);
     this._onPlayerMoved = this._onPlayerMoved.bind(this);
     this._onPlayerBlocked = this._onPlayerBlocked.bind(this);
+    this._onKeyCollected = this._onKeyCollected.bind(this);
+    this._onLevelExited = this._onLevelExited.bind(this);
     this._onObjectAmbient = this._onObjectAmbient.bind(this);
     this._onCreatureTick = this._onCreatureTick.bind(this);
     this._onPlayerDeath = this._onPlayerDeath.bind(this);
@@ -178,6 +193,8 @@ export class AudioEventBus {
     gameEvents.on('INPUT_TICK', this._onInputTick);
     gameEvents.on('PLAYER_MOVED', this._onPlayerMoved);
     gameEvents.on('PLAYER_BLOCKED', this._onPlayerBlocked);
+    gameEvents.on('KEY_COLLECTED', this._onKeyCollected);
+    gameEvents.on('LEVEL_EXITED', this._onLevelExited);
     gameEvents.on('OBJECT_AMBIENT', this._onObjectAmbient);
     gameEvents.on('CREATURE_TICK', this._onCreatureTick);
     gameEvents.on('PLAYER_DEATH', this._onPlayerDeath);
@@ -215,27 +232,33 @@ export class AudioEventBus {
   async _loadBuffers() {
     const ctx = audioContext;
     if (!ctx) return;
-    if (!AUDIO_ASSETS_ENABLED) return;
+    if (AUDIO_ASSETS_ENABLED) {
+      const entries = Object.entries(URLS.footstep);
+      await Promise.all(
+        entries.map(async ([key, url]) => {
+          this._footstepBuffers[key] = await decodeUrl(ctx, url);
+        }),
+      );
 
-    const entries = Object.entries(URLS.footstep);
+      this._buffers.bump = await decodeUrl(ctx, URLS.bump);
+      this._buffers.death = await decodeUrl(ctx, URLS.death);
+
+      await Promise.all(
+        Object.entries(URLS.ambient).map(async ([key, url]) => {
+          this._ambientBuffers[key] = await decodeUrl(ctx, url);
+        }),
+      );
+
+      await Promise.all(
+        Object.entries(URLS.creature).map(async ([key, url]) => {
+          this._creatureBuffers[key] = await decodeUrl(ctx, url);
+        }),
+      );
+    }
+
     await Promise.all(
-      entries.map(async ([key, url]) => {
-        this._footstepBuffers[key] = await decodeUrl(ctx, url);
-      }),
-    );
-
-    this._buffers.bump = await decodeUrl(ctx, URLS.bump);
-    this._buffers.death = await decodeUrl(ctx, URLS.death);
-
-    await Promise.all(
-      Object.entries(URLS.ambient).map(async ([key, url]) => {
-        this._ambientBuffers[key] = await decodeUrl(ctx, url);
-      }),
-    );
-
-    await Promise.all(
-      Object.entries(URLS.creature).map(async ([key, url]) => {
-        this._creatureBuffers[key] = await decodeUrl(ctx, url);
+      Object.entries(SFX_URLS).map(async ([key, url]) => {
+        this._sfxBuffers[key] = await decodeUrl(ctx, url);
       }),
     );
   }
@@ -302,6 +325,11 @@ export class AudioEventBus {
       playerAudioGrid.x = g.x;
       playerAudioGrid.y = g.y;
     }
+    const walkSfx = this._sfxBuffers.walkingWood;
+    if (walkSfx) {
+      this._playSfx(walkSfx, { gain: 0.2, playbackRate: 1.5 });
+      return;
+    }
     const floorType =
       detail && typeof detail === 'object' && 'floorType' in detail
         ? /** @type {{ floorType?: unknown }} */ (detail).floorType
@@ -322,6 +350,14 @@ export class AudioEventBus {
   }
 
   _onPlayerBlocked(detail) {
+    if (detail && typeof detail === 'object') {
+      const objectType = /** @type {{ objectType?: unknown }} */ (detail).objectType;
+      if (objectType === 'door-locked') {
+        const lockedSfx = this._sfxBuffers.attemptOpenLockedDoor;
+        if (lockedSfx) this._playSfx(lockedSfx);
+        return;
+      }
+    }
     const g = gridFromDetail(detail);
     if (!g || !this._bumpSource) return;
     this._bumpSource.setPosition(formatCell(g.x, g.y));
@@ -332,6 +368,40 @@ export class AudioEventBus {
     this._directionalSources.add(this._bumpSource);
     this._bumpSource.updateDirectionalFilter(playerAudioGrid, this._inputManager?.heading ?? 0);
     void audioContext?.resume().then(() => this._bumpSource?.play());
+  }
+
+  _onKeyCollected() {
+    const sfx = this._sfxBuffers.keyJingle;
+    if (sfx) this._playSfx(sfx);
+  }
+
+  _onLevelExited() {
+    const sfx = this._sfxBuffers.openDoorWithKey;
+    if (sfx) this._playSfx(sfx);
+  }
+
+  /**
+   * @param {AudioBuffer} buffer
+   * @param {{ gain?: number; playbackRate?: number }} [opts]
+   */
+  _playSfx(buffer, opts = {}) {
+    const ctx = audioContext;
+    if (!ctx || !buffer) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = typeof opts.playbackRate === 'number' ? opts.playbackRate : 1;
+    const gain = ctx.createGain();
+    gain.gain.value = typeof opts.gain === 'number' ? opts.gain : 1;
+    src.connect(gain);
+    if (this._masterGain) gain.connect(this._masterGain);
+    else gain.connect(ctx.destination);
+    void ctx.resume().then(() => {
+      try {
+        src.start();
+      } catch {
+        /* */
+      }
+    });
   }
 
   /**

@@ -168,8 +168,15 @@ export class GridEngine {
       return;
     }
 
-    if (this._objectBlocks(nx, ny)) {
-      this._emitter.emit('PLAYER_BLOCKED', { x: nx, y: ny, cell: toCell(nx, ny) });
+    const blockingObject = this._blockingObjectAt(nx, ny);
+    if (blockingObject) {
+      this._emitter.emit('PLAYER_BLOCKED', {
+        x: nx,
+        y: ny,
+        cell: toCell(nx, ny),
+        objectId: blockingObject.id,
+        objectType: blockingObject.type,
+      });
       this._emitGridStateChanged();
       return;
     }
@@ -259,11 +266,22 @@ export class GridEngine {
    * @param {number} y
    */
   _objectBlocks(x, y) {
-    if (this._terrain[y]?.[x] === 2) return true;
+    return this._blockingObjectAt(x, y) != null;
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @returns {{ id: string; type: string; x: number; y: number; devLabel?: string } | null}
+   */
+  _blockingObjectAt(x, y) {
+    if (this._terrain[y]?.[x] === 2) {
+      return { id: 'terrain-object', type: 'terrain-object', x, y };
+    }
     const obj = this._objectsByKey.get(`${x},${y}`);
-    if (!obj) return false;
-    if (obj.type === 'key' || obj.type === 'door-unlocked') return false;
-    return true;
+    if (!obj) return null;
+    if (obj.type === 'key' || obj.type === 'door-unlocked') return null;
+    return obj;
   }
 
   /**
