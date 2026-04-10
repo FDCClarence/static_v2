@@ -1,22 +1,23 @@
 {
   "id": "level_01",
-  "gridWidth": 6,
-  "gridHeight": 6,
+  "gridWidth": 7,
+  "gridHeight": 7,
   "reverbPreset": "small-room",
   "ambientSound": null,
   "grid": [
-    [1, 1, 1, 1, 1, 1],
-    [1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1, 1]
+    [1, 0, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1, 1, 1]
   ],
   "objects": [
-    { "id": "key_1", "type": "key", "cell": "E2" },
-    { "id": "exit_1", "type": "exit-locked", "cell": "B2", "devLabel": "EXT" }
+    { "id": "key_1", "type": "key", "cell": "F3" },
+    { "id": "exit_1", "type": "door-locked", "cell": "B1", "devLabel": "LKD" }
   ],
   "creatures": [],
-  "playerStart": { "cell": "E5" },
+  "playerStart": { "cell": "E6" },
   "exitCondition": { "type": "reach", "cell": "B2" }
 }

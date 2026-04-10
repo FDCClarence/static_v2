@@ -67,6 +67,8 @@ export class GridEngine {
 
     /** @type {unknown} */
     this._levelMeta = null;
+    /** @type {boolean} */
+    this._hasLevelKey = false;
 
     this._onMoveIntent = this._onMoveIntent.bind(this);
     this._onFacingChanged = this._onFacingChanged.bind(this);
@@ -132,6 +134,7 @@ export class GridEngine {
       ambientSound: d.ambientSound,
       exitCondition: d.exitCondition,
     };
+    this._hasLevelKey = false;
 
     this._gameState = 'PLAYING';
     this._loaded = true;
@@ -180,6 +183,8 @@ export class GridEngine {
 
     this._playerPos.x = nx;
     this._playerPos.y = ny;
+
+    this._handlePlayerSteppedOnObject(nx, ny);
 
     this._emitter.emit('PLAYER_MOVED', {
       x: nx,
@@ -255,7 +260,10 @@ export class GridEngine {
    */
   _objectBlocks(x, y) {
     if (this._terrain[y]?.[x] === 2) return true;
-    return this._objectsByKey.has(`${x},${y}`);
+    const obj = this._objectsByKey.get(`${x},${y}`);
+    if (!obj) return false;
+    if (obj.type === 'key' || obj.type === 'door-unlocked') return false;
+    return true;
   }
 
   /**
@@ -264,6 +272,47 @@ export class GridEngine {
    */
   _creatureAt(x, y) {
     return this._creatures.some((c) => c.x === x && c.y === y);
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   */
+  _handlePlayerSteppedOnObject(x, y) {
+    const objectKey = `${x},${y}`;
+    const obj = this._objectsByKey.get(objectKey);
+    if (!obj) return;
+
+    if (obj.type === 'key') {
+      this._objectsByKey.delete(objectKey);
+      this._hasLevelKey = true;
+      this._unlockDoors();
+      this._emitter.emit('KEY_COLLECTED', { objectId: obj.id, cell: toCell(x, y), x, y });
+      return;
+    }
+
+    if (obj.type === 'door-unlocked') {
+      this._emitter.emit('LEVEL_EXITED', {
+        levelId: this._levelMeta && typeof this._levelMeta === 'object' ? this._levelMeta.id : undefined,
+        doorId: obj.id,
+        cell: toCell(x, y),
+        x,
+        y,
+      });
+    }
+  }
+
+  _unlockDoors() {
+    for (const [key, obj] of this._objectsByKey) {
+      if (obj.type !== 'door-locked') continue;
+      this._objectsByKey.set(key, { ...obj, type: 'door-unlocked', devLabel: 'OPN' });
+      this._emitter.emit('DOOR_UNLOCKED', {
+        objectId: obj.id,
+        cell: toCell(obj.x, obj.y),
+        x: obj.x,
+        y: obj.y,
+      });
+    }
   }
 
   _buildDisplayGrid() {

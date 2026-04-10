@@ -55,6 +55,20 @@
     "devLabel": "SFE",
     "sounds": { "interact": "metal-click" }
   },
-  { "id": "key", "walkable": true, "interactable": true, "devLabel": "KEY", "sounds": { "ambient": "key-static" } },
-  { "id": "exit-locked", "walkable": false, "interactable": true, "devLabel": "EXT", "sounds": {} }
+  {
+    "id": "key",
+    "walkable": true,
+    "interactable": true,
+    "devLabel": "KEY",
+    "sounds": {
+      "ambient": "key-static"
+    }
+  },
+  {
+    "id": "exit-locked",
+    "walkable": false,
+    "interactable": true,
+    "devLabel": "EXT",
+    "sounds": {}
+  }  
 ]
