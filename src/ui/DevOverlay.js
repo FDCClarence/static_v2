@@ -2,7 +2,12 @@
 
 import { gameEvents } from '../engine/EventEmitter.js';
 
-const IS_DEV_BUILD = Boolean(import.meta?.env?.DEV);
+const DEV_OVERRIDE =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('dev') === '1';
+const IS_LOCALHOST =
+  typeof window !== 'undefined' &&
+  ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+const IS_DEV_BUILD = Boolean(import.meta?.env?.DEV) || DEV_OVERRIDE || IS_LOCALHOST;
 
 const HUD_H = 32;
 const PAD = 40;

@@ -13,24 +13,29 @@ const MASTER_FADE_S = 2;
 const DEATH_RESET_DELAY_S = 3;
 const RAMP_TAIL_S = 0.02;
 
+/** @param {string} file */
+function assetUrl(file) {
+  return new URL(`../../audio/${file}`, import.meta.url).href;
+}
+
 /** Optional decode URLs (add files under /public/audio/). */
 const URLS = {
   footstep: {
-    default: '/audio/footstep_default.wav',
-    wood: '/audio/footstep_wood.wav',
-    tile: '/audio/footstep_tile.wav',
-    carpet: '/audio/footstep_carpet.wav',
-    metal: '/audio/footstep_metal.wav',
-    concrete: '/audio/footstep_concrete.wav',
-    parquet: '/audio/footstep_parquet.wav',
+    default: assetUrl('footstep_default.wav'),
+    wood: assetUrl('footstep_wood.wav'),
+    tile: assetUrl('footstep_tile.wav'),
+    carpet: assetUrl('footstep_carpet.wav'),
+    metal: assetUrl('footstep_metal.wav'),
+    concrete: assetUrl('footstep_concrete.wav'),
+    parquet: assetUrl('footstep_parquet.wav'),
   },
-  bump: '/audio/bump.wav',
-  death: '/audio/death.wav',
+  bump: assetUrl('bump.wav'),
+  death: assetUrl('death.wav'),
   ambient: {
-    default: '/audio/ambient_default.wav',
+    default: assetUrl('ambient_default.wav'),
   },
   creature: {
-    default: '/audio/creature_default.wav',
+    default: assetUrl('creature_default.wav'),
   },
 };
 

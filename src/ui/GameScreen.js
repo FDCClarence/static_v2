@@ -5,7 +5,12 @@ import { gridEngine } from '../engine/GridEngine.js';
 import * as DevOverlay from './DevOverlay.js';
 
 const STYLE_ID = 'game-screen-styles';
-const IS_DEV = Boolean(import.meta?.env?.DEV);
+const DEV_OVERRIDE =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('dev') === '1';
+const IS_LOCALHOST =
+  typeof window !== 'undefined' &&
+  ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+const IS_DEV = Boolean(import.meta?.env?.DEV) || DEV_OVERRIDE || IS_LOCALHOST;
 
 export class GameScreen {
   constructor() {
