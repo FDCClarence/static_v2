@@ -116,6 +116,7 @@ const SFX_FILES = {
   wallBump: 'wall-bump.mp3',
   backroomsBgMusic: 'backrooms-bg-music.mp3',
   landingPageMusic: 'landing-page-music.mp3',
+  gameOverMusic: 'charlie-kirk.mp3',
 };
 const MUSIC_FADE_S = 0.8;
 
@@ -268,6 +269,7 @@ export class AudioEventBus {
       wallBump: null,
       backroomsBgMusic: null,
       landingPageMusic: null,
+       gameOverMusic: null,
     };
     /** @type {AudioBufferSourceNode | null} */
     this._bgMusicSource = null;
@@ -277,10 +279,16 @@ export class AudioEventBus {
     this._landingMusicSource = null;
     /** @type {GainNode | null} */
     this._landingMusicGain = null;
+    /** @type {AudioBufferSourceNode | null} */
+    this._gameOverMusicSource = null;
+    /** @type {GainNode | null} */
+    this._gameOverMusicGain = null;
     /** @type {boolean} */
     this._wantBgMusic = false;
     /** @type {boolean} */
     this._wantLandingMusic = false;
+    /** @type {boolean} */
+    this._wantGameOverMusic = false;
 
     /** @type {boolean} */
     this._deathInProgress = false;
@@ -511,6 +519,7 @@ export class AudioEventBus {
     // On slower networks (e.g. GH Pages), music start may be requested before large files decode.
     if (this._wantBgMusic) this.startBgMusic();
     if (this._wantLandingMusic) this.startLandingMusic();
+    if (this._wantGameOverMusic) this.startGameOverMusic();
   }
 
   _createOneShotSources() {
@@ -960,6 +969,7 @@ export class AudioEventBus {
   startBgMusic() {
     this._wantBgMusic = true;
     this._wantLandingMusic = false;
+    this._wantGameOverMusic = false;
     const ctx = audioContext;
     const buffer = this._sfxBuffers.backroomsBgMusic;
     if (!ctx || !buffer || this._bgMusicSource) return;
@@ -1021,8 +1031,10 @@ export class AudioEventBus {
   }
 
   startLandingMusic() {
+    this.stopGameOverMusic();
     this._wantLandingMusic = true;
     this._wantBgMusic = false;
+    this._wantGameOverMusic = false;
     const ctx = audioContext;
     const buffer = this._sfxBuffers.landingPageMusic;
     if (!ctx || !buffer || this._landingMusicSource) return;
@@ -1083,9 +1095,78 @@ export class AudioEventBus {
     this._landingMusicGain = null;
   }
 
+  /**
+   * Looping background for the game-over screen (`public/assets/sfx/charlie-kirk.mp3`).
+   * Call when the final level is cleared and the game-over UI is shown (not on every `LEVEL_EXITED`).
+   */
+  startGameOverMusic() {
+    this._wantGameOverMusic = true;
+    this._wantBgMusic = false;
+    this._wantLandingMusic = false;
+    const ctx = audioContext;
+    const buffer = this._sfxBuffers.gameOverMusic;
+    if (!ctx || !buffer || this._gameOverMusicSource) return;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.1, now + MUSIC_FADE_S);
+    src.connect(gain);
+    if (this._masterGain) gain.connect(this._masterGain);
+    else gain.connect(ctx.destination);
+
+    src.onended = () => {
+      if (this._gameOverMusicSource === src) {
+        this._gameOverMusicSource = null;
+        this._gameOverMusicGain = null;
+      }
+    };
+
+    this._gameOverMusicSource = src;
+    this._gameOverMusicGain = gain;
+    void ctx.resume().then(() => {
+      try {
+        src.start();
+      } catch {
+        /* */
+      }
+    });
+  }
+
+  stopGameOverMusic() {
+    this._wantGameOverMusic = false;
+    const ctx = audioContext;
+    const source = this._gameOverMusicSource;
+    const gain = this._gameOverMusicGain;
+    if (!source || !gain || !ctx) return;
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + MUSIC_FADE_S);
+    const sourceToStop = source;
+    const gainToDisconnect = gain;
+    setTimeout(() => {
+      try {
+        sourceToStop.stop();
+      } catch {
+        /* */
+      }
+      sourceToStop.disconnect();
+      gainToDisconnect.disconnect();
+    }, Math.ceil((MUSIC_FADE_S + 0.05) * 1000));
+    this._gameOverMusicSource = null;
+    this._gameOverMusicGain = null;
+  }
+
   stopAllMusic() {
     this.stopBgMusic();
     this.stopLandingMusic();
+    this.stopGameOverMusic();
   }
 
   stopBgMusicImmediate() {

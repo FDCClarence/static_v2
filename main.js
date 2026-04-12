@@ -37,6 +37,7 @@ void audioEventBus.init({ inputManager });
 
 const landingPage = new LandingPage();
 landingPage.onStart = async () => {
+  audioEventBus.stopGameOverMusic();
   audioEventBus.stopLandingMusic();
   landingPage.hide();
   gameOverScreen.hide();
@@ -78,6 +79,7 @@ gameEvents.on('LEVEL_EXITED', async () => {
   const nextLevelIndex = currentLevelIndex + 1;
   if (nextLevelIndex >= LEVEL_IDS.length) {
     audioEventBus.stopBgMusic();
+    audioEventBus.startGameOverMusic();
     gameScreen.hide();
     gameOverScreen.show();
     return;
