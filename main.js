@@ -3,7 +3,7 @@ import { audioEventBus, playerAudioGrid } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
 import './src/audio/ReverbZones.js';
 import { gridEngine, parseCell } from './src/engine/GridEngine.js';
-import './src/engine/GameLoop.js';
+import { gameLoop, resolveRandomCreatureSpawns } from './src/engine/GameLoop.js';
 import './src/engine/EventEmitter.js';
 import { InputManager } from './src/engine/InputManager.js';
 import './src/entities/Player.js';
@@ -88,6 +88,11 @@ gameEvents.on('LEVEL_EXITED', async () => {
   await startLevel(currentLevelIndex);
 });
 
+gameEvents.on('PLAYER_DEATH', () => {
+  gameScreen.hide();
+  gameOverScreen.show();
+});
+
 gameEvents.on('KEY_COLLECTED', () => {
   if (suppressKeyCollectWorldStop) {
     suppressKeyCollectWorldStop = false;
@@ -163,12 +168,31 @@ async function startLevel(levelIndex) {
   if (!levelData) return;
   audioEventBus.clearWorldAmbientLoops();
   suppressKeyCollectWorldStop = false;
+  resolveRandomCreatureSpawns(levelData);
   gridEngine.loadLevel(levelData);
+  gameLoop.onLevelLoading(levelData);
+
+  const ps = levelData.playerStart;
+  const playerStartCell =
+    ps && typeof ps === 'object' && typeof /** @type {{ cell?: unknown }} */ (ps).cell === 'string'
+      ? /** @type {{ cell: string }} */ (ps).cell
+      : null;
+  if (typeof playerStartCell === 'string') {
+    const spawn = parseCell(playerStartCell);
+    playerAudioGrid.x = spawn.x;
+    playerAudioGrid.y = spawn.y;
+    audioEngine.setListenerTransform(playerAudioGrid, inputManager.smoothedHeading);
+  }
 
   const keyObject = Array.isArray(levelData.objects)
     ? levelData.objects.find((obj) => obj && obj.type === 'key' && typeof obj.cell === 'string')
     : null;
-  if (!keyObject) return;
-  const keyCell = parseCell(keyObject.cell);
-  audioEventBus.playRegistryObjectWorldLoop(LEVEL_OBJECT_WORLD_LOOP_ID, keyCell.x, keyCell.y, 'key');
+  if (keyObject) {
+    const keyCell = parseCell(keyObject.cell);
+    audioEventBus.playRegistryObjectWorldLoop(LEVEL_OBJECT_WORLD_LOOP_ID, keyCell.x, keyCell.y, 'key');
+  }
 }
+
+gameLoop.setReloadHandler(async () => {
+  await startLevel(currentLevelIndex);
+});

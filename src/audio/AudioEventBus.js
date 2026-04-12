@@ -5,6 +5,7 @@ import { audioContext, audioEngine } from './AudioEngine.js';
 import { SpatialSource } from './SpatialSource.js';
 import { gameEvents } from '../engine/EventEmitter.js';
 import { formatCell, parseCell } from '../engine/GridEngine.js';
+import creatureRegistry from '../data/creatures/registry.json';
 
 /** Current player cell for panning; game may also set via PLAYER_MOVED payload. */
 export const playerAudioGrid = { x: 0, y: 0 };
@@ -117,6 +118,7 @@ const SFX_FILES = {
   backroomsBgMusic: 'backrooms-bg-music.mp3',
   landingPageMusic: 'landing-page-music.mp3',
   gameOverMusic: 'charlie-kirk.mp3',
+  zombieGasp: 'zombie-gasp.wav',
 };
 const MUSIC_FADE_S = 0.8;
 
@@ -258,6 +260,12 @@ export class AudioEventBus {
     this._ambientBuffers = {};
     /** @type {Record<string, AudioBuffer | null>} */
     this._creatureBuffers = {};
+    /** Registry creature id → decoded `sounds.ambient` from `public/assets/sfx` (mp3/wav). */
+    /** @type {Map<string, AudioBuffer>} */
+    this._creatureAmbientByTypeId = new Map();
+    /** Registry creature id → linear gain multiplier (`volume` field, default 1). */
+    /** @type {Map<string, number>} */
+    this._creatureVolumeByTypeId = new Map();
     /** @type {Record<string, AudioBuffer | null>} */
     this._sfxBuffers = {
       walkingWood: null,
@@ -295,6 +303,12 @@ export class AudioEventBus {
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._deathResetTimer = null;
 
+    /** Stalker idle gasp: creature id → anchor time + last grid pos for spatial one-shots. */
+    /** @type {Map<string, { anchorMs: number; x: number; y: number }>} */
+    this._stalkerIdleGaspById = new Map();
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._stalkerIdleGaspInterval = null;
+
     /** Last smoothed heading used for Resonance (matches INPUT_TICK; not raw gyro). */
     this._spatialHeading = 0;
 
@@ -307,6 +321,10 @@ export class AudioEventBus {
     this._onCreatureTick = this._onCreatureTick.bind(this);
     this._onPlayerDeath = this._onPlayerDeath.bind(this);
     this._onResetGame = this._onResetGame.bind(this);
+    this._onStalkerIdleClear = this._onStalkerIdleClear.bind(this);
+    this._onStalkerSpawned = this._onStalkerSpawned.bind(this);
+    this._onStalkerMove = this._onStalkerMove.bind(this);
+    this._tickStalkerIdleGasp = this._tickStalkerIdleGasp.bind(this);
   }
 
   /**
@@ -329,9 +347,13 @@ export class AudioEventBus {
     gameEvents.on('CREATURE_TICK', this._onCreatureTick);
     gameEvents.on('PLAYER_DEATH', this._onPlayerDeath);
     gameEvents.on('RESET_GAME', this._onResetGame);
+    gameEvents.on('STALKER_IDLE_CLEAR', this._onStalkerIdleClear);
+    gameEvents.on('STALKER_SPAWNED', this._onStalkerSpawned);
+    gameEvents.on('STALKER_MOVE', this._onStalkerMove);
 
     await this._loadBuffers();
     this._createOneShotSources();
+    this._stalkerIdleGaspInterval = setInterval(this._tickStalkerIdleGasp, 1000);
     this._busInitialized = true;
   }
 
@@ -516,10 +538,41 @@ export class AudioEventBus {
       }),
     );
 
+    await this._loadCreatureRegistryAmbients(ctx, sfxBase);
+
     // On slower networks (e.g. GH Pages), music start may be requested before large files decode.
     if (this._wantBgMusic) this.startBgMusic();
     if (this._wantLandingMusic) this.startLandingMusic();
     if (this._wantGameOverMusic) this.startGameOverMusic();
+  }
+
+  /**
+   * Decode creature registry `sounds.ambient` filenames from `public/assets/sfx` (.mp3 then .wav).
+   * @param {AudioContext} ctx
+   * @param {string} sfxBase
+   */
+  async _loadCreatureRegistryAmbients(ctx, sfxBase) {
+    this._creatureAmbientByTypeId.clear();
+    this._creatureVolumeByTypeId.clear();
+    for (const cr of creatureRegistry) {
+      if (!cr || typeof cr !== 'object') continue;
+      const typeId = /** @type {{ id?: unknown; volume?: unknown; sounds?: unknown }} */ (cr).id;
+      if (typeof typeId !== 'string') continue;
+      const volRaw = /** @type {{ volume?: unknown }} */ (cr).volume;
+      const vol =
+        typeof volRaw === 'number' && Number.isFinite(volRaw) ? Math.max(0, volRaw) : 1;
+      this._creatureVolumeByTypeId.set(typeId, vol);
+      const sounds = /** @type {{ sounds?: { ambient?: unknown } }} */ (cr).sounds;
+      const ambient =
+        sounds && typeof sounds === 'object' && typeof sounds.ambient === 'string' ? sounds.ambient : null;
+      if (!ambient) continue;
+      let buf = null;
+      for (const ext of ['.mp3', '.wav']) {
+        buf = await decodeUrl(ctx, sfxUrl(sfxBase, `${ambient}${ext}`));
+        if (buf) break;
+      }
+      if (buf) this._creatureAmbientByTypeId.set(typeId, buf);
+    }
   }
 
   _createOneShotSources() {
@@ -841,32 +894,99 @@ export class AudioEventBus {
   }
 
   /**
-   * @param {unknown} detail
+   * Non-looping spatial SFX at a grid cell (Resonance source + directional filter vs listener / gyro).
+   * @param {number} gridX
+   * @param {number} gridY
+   * @param {AudioBuffer} buffer
+   * @param {{ gain?: number }} [opts]
    */
-  _onCreatureTick(detail) {
-    const raw = detail && typeof detail === 'object' ? /** @type {{ creatures?: unknown }} */ (detail).creatures : null;
-    if (!Array.isArray(raw)) return;
-
+  _playSpatialOneShot(gridX, gridY, buffer, opts = {}) {
     const ctx = audioContext;
     const ra = audioEngine.resonanceAudio;
-    if (!ctx || !ra) return;
+    if (!ctx || !ra || !buffer) return;
+    const gain = typeof opts.gain === 'number' ? opts.gain : 1;
+    const src = new SpatialSource({
+      audioContext: ctx,
+      resonanceAudio: ra,
+      cell: formatCell(gridX, gridY),
+      soundBuffer: buffer,
+      loop: false,
+      baseVolume: gain,
+    });
+    src.onPlaybackEnded = () => {
+      this._directionalSources.delete(src);
+      src.onPlaybackEnded = null;
+    };
+    this._directionalSources.add(src);
+    src.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
+    void ctx.resume().then(() => src.play());
+  }
+
+  /**
+   * @param {unknown} detail
+   * `creatures[]` (legacy) or `{ id, pos, creatureTypeId }` from {@link GameLoop} / {@link Creature}.
+   */
+  _onCreatureTick(detail) {
+    if (this._deathInProgress) return;
+    const ctx = audioContext;
+    const ra = audioEngine.resonanceAudio;
+    if (!ctx || !ra || !detail || typeof detail !== 'object') return;
+
+    const d = /** @type {Record<string, unknown>} */ (detail);
+
+    /** @type {{ id: string; x: number; y: number; soundKey?: string; creatureTypeId?: string }[]} */
+    const list = [];
+
+    if (Array.isArray(d.creatures)) {
+      for (const c of d.creatures) {
+        if (!c || typeof c !== 'object') continue;
+        const cr = /** @type {Record<string, unknown>} */ (c);
+        if (typeof cr.id !== 'string') continue;
+        const g = gridFromDetail(cr);
+        if (!g) continue;
+        const ck =
+          typeof cr.soundKey === 'string' && cr.soundKey in URLS.creature ? cr.soundKey : 'default';
+        list.push({ id: cr.id, x: g.x, y: g.y, soundKey: ck });
+      }
+    } else if (typeof d.id === 'string' && d.pos && typeof d.pos === 'object') {
+      const pos = /** @type {{ x?: unknown; y?: unknown }} */ (d.pos);
+      if (typeof pos.x === 'number' && typeof pos.y === 'number') {
+        const creatureTypeId = typeof d.creatureTypeId === 'string' ? d.creatureTypeId : '';
+        list.push({ id: d.id, x: pos.x, y: pos.y, creatureTypeId });
+      }
+    }
+
+    if (list.length === 0) return;
 
     const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
     const seen = new Set();
-    for (const c of raw) {
-      if (!c || typeof c !== 'object') continue;
-      const cr = /** @type {Record<string, unknown>} */ (c);
-      if (typeof cr.id !== 'string') continue;
-      const g = gridFromDetail(cr);
-      if (!g) continue;
-      seen.add(cr.id);
-      const cell = formatCell(g.x, g.y);
-      const ck =
-        typeof cr.soundKey === 'string' && cr.soundKey in URLS.creature ? cr.soundKey : 'default';
-      const cBuf = this._creatureBuffers[ck] ?? this._creatureBuffers.default;
+
+    for (const item of list) {
+      seen.add(item.id);
+      const cell = formatCell(item.x, item.y);
+
+      let cBuf = null;
+      if (typeof item.soundKey === 'string') {
+        cBuf = this._creatureBuffers[item.soundKey] ?? this._creatureBuffers.default;
+      } else if (item.creatureTypeId) {
+        cBuf =
+          this._creatureAmbientByTypeId.get(item.creatureTypeId) ??
+          this._creatureBuffers.default ??
+          null;
+      } else {
+        cBuf = this._creatureBuffers.default ?? null;
+      }
+
       const audible = cBuf != null;
       const buf = cBuf ?? silent;
-      let src = this._creatureById.get(cr.id);
+
+      const creatureGain =
+        typeof item.creatureTypeId === 'string' && item.creatureTypeId
+          ? (this._creatureVolumeByTypeId.get(item.creatureTypeId) ?? 1)
+          : 1;
+      const loopVol = audible ? creatureGain : 0;
+
+      let src = this._creatureById.get(item.id);
       if (!src) {
         src = new SpatialSource({
           audioContext: ctx,
@@ -874,20 +994,26 @@ export class AudioEventBus {
           cell,
           soundBuffer: buf,
           loop: true,
-          baseVolume: audible ? 1 : 0,
+          baseVolume: loopVol,
         });
-        this._creatureById.set(cr.id, src);
+        this._creatureById.set(item.id, src);
         this._directionalSources.add(src);
         if (audible) void audioContext?.resume().then(() => src?.play());
       } else {
         src.setPosition(cell);
         src.setSoundBuffer(buf);
-        src.setVolume(audible ? 1 : 0);
+        src.setVolume(loopVol);
         if (audible) {
           if (!src.playing) void audioContext?.resume().then(() => src.play());
         } else {
           src.stop();
         }
+      }
+
+      const sg = this._stalkerIdleGaspById.get(item.id);
+      if (sg) {
+        sg.x = item.x;
+        sg.y = item.y;
       }
     }
 
@@ -905,6 +1031,9 @@ export class AudioEventBus {
   _onPlayerDeath() {
     if (this._deathInProgress) return;
     this._deathInProgress = true;
+
+    this._clearSpatialWorldSources();
+    this._onStalkerIdleClear();
 
     this._rampMasterGain(0, MASTER_FADE_S);
 
@@ -944,12 +1073,68 @@ export class AudioEventBus {
     }, DEATH_RESET_DELAY_S * 1000);
   }
 
+  _onStalkerIdleClear() {
+    this._stalkerIdleGaspById.clear();
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onStalkerSpawned(detail) {
+    if (!detail || typeof detail !== 'object') return;
+    const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown }} */ (detail);
+    if (typeof d.id !== 'string') return;
+    const x = typeof d.x === 'number' && Number.isFinite(d.x) ? d.x : 0;
+    const y = typeof d.y === 'number' && Number.isFinite(d.y) ? d.y : 0;
+    this._stalkerIdleGaspById.set(d.id, { anchorMs: performance.now(), x, y });
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onStalkerMove(detail) {
+    if (!detail || typeof detail !== 'object') return;
+    const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown }} */ (detail);
+    if (typeof d.id !== 'string') return;
+    const st = this._stalkerIdleGaspById.get(d.id);
+    if (!st) return;
+    
+    st.anchorMs = performance.now();
+    
+    if (typeof d.x === 'number' && typeof d.y === 'number') {
+      st.x = d.x;
+      st.y = d.y;
+    }
+    
+    const buf = this._sfxBuffers.zombieGasp;
+    if (buf) {
+      const gv = 0.85 * (this._creatureVolumeByTypeId.get('stalker') ?? 1);
+      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+    }
+  }
+
+  _tickStalkerIdleGasp() {
+    if (!this._busInitialized || this._deathInProgress) return;
+    const buf = this._sfxBuffers.zombieGasp;
+    if (!buf) return;
+    const now = performance.now();
+    const idleMs = 10000;
+    const gv = 0.85 * (this._creatureVolumeByTypeId.get('stalker') ?? 1);
+    for (const [, st] of this._stalkerIdleGaspById) {
+      if (now - st.anchorMs < idleMs) continue;
+      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+      st.anchorMs = now;
+    }
+  }
+
   _onResetGame() {
     if (this._deathResetTimer) {
       clearTimeout(this._deathResetTimer);
       this._deathResetTimer = null;
     }
     this._deathInProgress = false;
+
+    this._stalkerIdleGaspById.clear();
 
     this._rampMasterGain(1, RAMP_TAIL_S);
 

@@ -1,7 +1,8 @@
 [
   {
     "id": "stalker",
-    "speed": 1,
+    "volume": 0.35,
+    "speed": 3,
     "hearingRadius": 6,
     "behavior": "stalk",
     "devLabel": "STK",
@@ -9,6 +10,7 @@
   },
   {
     "id": "deceiver",
+    "volume": 1,
     "speed": 1,
     "hearingRadius": 8,
     "behavior": "deceive",
@@ -17,6 +19,7 @@
   },
   {
     "id": "guard",
+    "volume": 1,
     "speed": 2,
     "hearingRadius": 4,
     "behavior": "guard",
@@ -25,6 +28,7 @@
   },
   {
     "id": "ambusher",
+    "volume": 1,
     "speed": 3,
     "hearingRadius": 1,
     "behavior": "ambush",

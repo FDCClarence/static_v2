@@ -298,6 +298,46 @@ export class GridEngine {
     this._emitGridStateChanged();
   }
 
+  /** Snapshot for pathfinding / creature AI (terrain + object types). */
+  get grid() {
+    const objects = [];
+    for (const [, o] of this._objectsByKey) {
+      objects.push({ id: o.id, type: o.type, cell: toCell(o.x, o.y) });
+    }
+    return {
+      grid: this._terrain.map((row) => row.slice()),
+      objects,
+    };
+  }
+
+  get playerPos() {
+    return { ...this._playerPos };
+  }
+
+  /**
+   * When gameplay state is DEAD (e.g. creature reached the player), keep grid UI in sync.
+   */
+  markDeadState() {
+    this._gameState = 'DEAD';
+    this._emitGridStateChanged();
+  }
+
+  /**
+   * @param {{ id: string; x: number; y: number }[]} updates
+   */
+  syncCreaturePositions(updates) {
+    let changed = false;
+    for (const { id, x, y } of updates) {
+      const c = this._creatures.find((cr) => cr.id === id);
+      if (c && (c.x !== x || c.y !== y)) {
+        c.x = x;
+        c.y = y;
+        changed = true;
+      }
+    }
+    if (changed) this._emitGridStateChanged();
+  }
+
   /**
    * @param {number} x
    * @param {number} y

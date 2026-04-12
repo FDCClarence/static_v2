@@ -20,7 +20,9 @@
     { "id": "key_1", "type": "key", "cell": "H3" },
     { "id": "exit_1", "type": "door-locked", "cell": "B1", "devLabel": "LKD" }
   ],
-  "creatures": [],
+  "creatures": [
+    { "id": "stalker_1", "creatureType": "stalker", "cell": "__RANDOM__" }
+  ],
   "playerStart": { "cell": "F8" },
   "exitCondition": { "type": "reach", "cell": "B2" }
 }
