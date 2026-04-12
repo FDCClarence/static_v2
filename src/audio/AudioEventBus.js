@@ -20,6 +20,18 @@ const RAMP_TAIL_S = 0.02;
 const AUDIO_ASSETS_ENABLED =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('audio') === '1';
 
+/** Short pulse when movement is blocked (Vibration API; common on Android; iOS often no-ops). */
+const BLOCK_BUMP_VIBRATE_MS = 35;
+
+function tryBlockedMoveVibrate() {
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+  try {
+    navigator.vibrate(BLOCK_BUMP_VIBRATE_MS);
+  } catch {
+    /* */
+  }
+}
+
 /** Decode WAVs from `public/audio/` (Vite: BASE_URL; plain ESM has no import.meta.env). */
 function assetUrl(file) {
   const base = import.meta.env?.BASE_URL;
@@ -629,6 +641,7 @@ export class AudioEventBus {
   }
 
   _onPlayerBlocked(detail) {
+    tryBlockedMoveVibrate();
     if (detail && typeof detail === 'object') {
       const objectType = /** @type {{ objectType?: unknown }} */ (detail).objectType;
       if (objectType === 'door-locked') {
