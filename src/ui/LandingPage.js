@@ -177,7 +177,7 @@ export class LandingPage {
 
     root.innerHTML = `
       <div class="landing-page__inner">
-        <h1 class="landing-page__title">you are blind and likely bald. they shaved your head brhhhh &#9996; &#128557; &#129344;</h1>
+        <h1 class="landing-page__title">you are blind and inside the bulsa of bossing  &#9996; &#128557; &#129344;</h1>
         <p class="landing-page__tagline">monkey no eye &#129318; &#128065;. monkey only ear &#128066;</p>
         <hr class="landing-page__divider" aria-hidden="true" />
         <div class="landing-page__controls">
