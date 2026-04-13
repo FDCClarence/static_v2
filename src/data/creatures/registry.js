@@ -1,0 +1,39 @@
+/** Creature definitions (plain JS so unbundled static hosts e.g. GitHub Pages can load as ES modules). */
+export default [
+  {
+    id: 'stalker',
+    volume: 0.35,
+    speed: 3,
+    hearingRadius: 6,
+    behavior: 'stalk',
+    devLabel: 'STK',
+    sounds: { ambient: 'stalk-breathing', chase: 'stalk-rush' },
+  },
+  {
+    id: 'deceiver',
+    volume: 1,
+    speed: 1,
+    hearingRadius: 8,
+    behavior: 'deceive',
+    devLabel: 'DCV',
+    sounds: { ambient: 'deceiver-hum', fake: 'deceiver-fake-footstep' },
+  },
+  {
+    id: 'guard',
+    volume: 1,
+    speed: 2,
+    hearingRadius: 4,
+    behavior: 'guard',
+    devLabel: 'GRD',
+    sounds: { ambient: 'guard-shuffle', alert: 'guard-screech' },
+  },
+  {
+    id: 'ambusher',
+    volume: 1,
+    speed: 3,
+    hearingRadius: 1,
+    behavior: 'ambush',
+    devLabel: 'AMB',
+    sounds: { ambient: null, trigger: 'ambush-burst' },
+  },
+];

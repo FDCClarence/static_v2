@@ -5,7 +5,8 @@ import { audioContext, audioEngine } from './AudioEngine.js';
 import { SpatialSource } from './SpatialSource.js';
 import { gameEvents } from '../engine/EventEmitter.js';
 import { formatCell, parseCell } from '../engine/GridEngine.js';
-import creatureRegistry from '../data/creatures/registry.json';
+import creatureRegistry from '../data/creatures/registry.js';
+import objectRegistry from '../data/objects/registry.js';
 
 /** Current player cell for panning; game may also set via PLAYER_MOVED payload. */
 export const playerAudioGrid = { x: 0, y: 0 };
@@ -392,25 +393,16 @@ export class AudioEventBus {
   /**
    * Register ambient asset URLs from object registry (`sounds.ambient` → `audio/<id>.wav`).
    */
-  async _registerObjectAmbientUrlsFromRegistry() {
-    const registryUrl = new URL('../data/objects/registry.json', import.meta.url);
-    try {
-      const res = await fetch(registryUrl);
-      if (!res.ok) return;
-      const reg = await res.json();
-      if (!Array.isArray(reg)) return;
-      for (const obj of reg) {
-        if (!obj || typeof obj !== 'object' || typeof obj.id !== 'string') continue;
-        const sounds = obj.sounds;
-        this._objectSoundsByTypeId.set(obj.id, sounds && typeof sounds === 'object' ? sounds : {});
-        if (!sounds || typeof sounds !== 'object') continue;
-        const amb = sounds.ambient;
-        if (typeof amb === 'string' && amb && !(amb in URLS.ambient)) {
-          URLS.ambient[amb] = assetUrl(`${amb}.wav`);
-        }
+  _registerObjectAmbientUrlsFromRegistry() {
+    for (const obj of objectRegistry) {
+      if (!obj || typeof obj !== 'object' || typeof obj.id !== 'string') continue;
+      const sounds = obj.sounds;
+      this._objectSoundsByTypeId.set(obj.id, sounds && typeof sounds === 'object' ? sounds : {});
+      if (!sounds || typeof sounds !== 'object') continue;
+      const amb = sounds.ambient;
+      if (typeof amb === 'string' && amb && !(amb in URLS.ambient)) {
+        URLS.ambient[amb] = assetUrl(`${amb}.wav`);
       }
-    } catch {
-      /* registry optional at dev time */
     }
   }
 
@@ -506,7 +498,7 @@ export class AudioEventBus {
   async _loadBuffers() {
     const ctx = audioContext;
     if (!ctx) return;
-    await this._registerObjectAmbientUrlsFromRegistry();
+    this._registerObjectAmbientUrlsFromRegistry();
     if (AUDIO_ASSETS_ENABLED) {
       const entries = Object.entries(URLS.footstep);
       await Promise.all(

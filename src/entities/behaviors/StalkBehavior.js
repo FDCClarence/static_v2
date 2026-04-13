@@ -1,4 +1,4 @@
-import objectRegistry from '../../data/objects/registry.json';
+import objectRegistry from '../../data/objects/registry.js';
 import { parseCell } from '../../engine/GridEngine.js';
 
 /** @type {Map<string, { walkable?: boolean }>} */

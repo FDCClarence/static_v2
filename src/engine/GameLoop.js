@@ -5,7 +5,7 @@
 import { gameEvents } from './EventEmitter.js';
 import { gridEngine, parseCell, toCell } from './GridEngine.js';
 import { Creature } from '../entities/Creature.js';
-import creatureRegistry from '../data/creatures/registry.json';
+import creatureRegistry from '../data/creatures/registry.js';
 
 const RANDOM_CREATURE_CELL = '__RANDOM__';
 

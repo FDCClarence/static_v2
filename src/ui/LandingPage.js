@@ -183,8 +183,10 @@ export class LandingPage {
         <div class="landing-page__controls">
           <p class="landing-page__controls-label">HOW TO PLAY</p>
           <div class="landing-page__controls-body">
-            <p>Rotate your phone to face a direction</p>
-            <p>Swipe up to move one step</p>
+            <p>Rotate phone for direction</p>
+            <p>Swipe up to move</p>
+            <p>There are creatures in the dark</p>
+            <p>Follow the sounds</p>
             <p>Use headphones</p>
           </div>
         </div>
