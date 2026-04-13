@@ -123,6 +123,9 @@ const SFX_FILES = {
 };
 const MUSIC_FADE_S = 0.8;
 
+/** Stalker: one-shot breathing while stationary (looping spatial ambient is disabled for this type). */
+const STALKER_IDLE_INTERVAL_MS = 10000;
+
 /** Map arbitrary floorType strings to footstep asset keys. */
 const FLOOR_TYPE_ALIASES = {
   floor: 'default',
@@ -304,7 +307,7 @@ export class AudioEventBus {
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._deathResetTimer = null;
 
-    /** Stalker idle gasp: creature id → anchor time + last grid pos for spatial one-shots. */
+    /** Stalker breathing one-shots: creature id → timer anchor + grid pos (no looping stalk-breathing spatial). */
     /** @type {Map<string, { anchorMs: number; x: number; y: number }>} */
     this._stalkerIdleGaspById = new Map();
     /** @type {ReturnType<typeof setInterval> | null} */
@@ -965,6 +968,8 @@ export class AudioEventBus {
           this._creatureAmbientByTypeId.get(item.creatureTypeId) ??
           this._creatureBuffers.default ??
           null;
+        // Stalker breathing is timed one-shots only; looping the asset reads as ~1 Hz spam.
+        if (item.creatureTypeId === 'stalker') cBuf = null;
       } else {
         cBuf = this._creatureBuffers.default ?? null;
       }
@@ -1098,7 +1103,7 @@ export class AudioEventBus {
       st.y = d.y;
     }
     
-    const buf = this._sfxBuffers.zombieGasp;
+    const buf = this._creatureAmbientByTypeId.get('stalker');
     if (buf) {
       const gv = 0.85 * (this._creatureVolumeByTypeId.get('stalker') ?? 1);
       this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
@@ -1107,15 +1112,14 @@ export class AudioEventBus {
 
   _tickStalkerIdleGasp() {
     if (!this._busInitialized || this._deathInProgress) return;
-    const buf = this._sfxBuffers.zombieGasp;
+    const buf = this._creatureAmbientByTypeId.get('stalker');
     if (!buf) return;
     const now = performance.now();
-    const idleMs = 10000;
     const gv = 0.85 * (this._creatureVolumeByTypeId.get('stalker') ?? 1);
     for (const [, st] of this._stalkerIdleGaspById) {
-      if (now - st.anchorMs < idleMs) continue;
-      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+      if (now - st.anchorMs < STALKER_IDLE_INTERVAL_MS) continue;
       st.anchorMs = now;
+      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
     }
   }
 
