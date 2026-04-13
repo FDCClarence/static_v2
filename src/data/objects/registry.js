@@ -13,7 +13,7 @@ export default [
     interactable: true,
     devLabel: 'DR',
     sounds: {
-      interact: 'door-locked-rattle',
+      interact_sound: 'attempt-open-locked-door.mp3',
       volume: 1,
     },
   },
@@ -23,11 +23,11 @@ export default [
     interactable: true,
     devLabel: 'DR',
     sounds: {
-      interact: 'door-open',
+      interact_sound: 'open-door-with-key.mp3',
       volume: 3.2,
-      worldLoop: 'doorBump',
-      worldLoopFadeInSec: 2,
-      worldLoopFadeOutSec: 2,
+      ambient_sound: 'door-bump.mp3',
+      ambient_fade_in_sec: 2,
+      ambient_fade_out_sec: 2,
     },
   },
   {
@@ -49,21 +49,24 @@ export default [
     walkable: false,
     interactable: true,
     devLabel: 'WIN',
-    sounds: { ambient: 'wind-outside', interact: 'window-rattle' },
+    sounds: {
+      ambient_sound: 'audio/wind-outside.wav',
+      interact_sound: 'window-rattle.wav',
+    },
   },
   {
     id: 'hole',
     walkable: true,
     interactable: false,
     devLabel: 'HOL',
-    sounds: { ambient: 'deep-hum' },
+    sounds: { ambient_sound: 'audio/deep-hum.wav' },
   },
   {
     id: 'safe',
     walkable: false,
     interactable: true,
     devLabel: 'SFE',
-    sounds: { interact: 'metal-click' },
+    sounds: { interact_sound: 'metal-click.mp3' },
   },
   {
     id: 'key',
@@ -72,9 +75,10 @@ export default [
     devLabel: 'KEY',
     sounds: {
       volume: 3.2,
-      worldLoop: 'keySound',
-      worldLoopFadeInSec: 1,
-      worldLoopFadeOutSec: 1,
+      ambient_sound: 'key-sound.mp3',
+      ambient_fade_in_sec: 1,
+      ambient_fade_out_sec: 1,
+      interact_sound: 'key-grab.mp3',
     },
   },
   {

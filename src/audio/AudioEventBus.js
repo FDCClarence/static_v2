@@ -123,8 +123,61 @@ const SFX_FILES = {
 };
 const MUSIC_FADE_S = 0.8;
 
-/** Stalker: one-shot breathing while stationary (looping spatial ambient is disabled for this type). */
-const STALKER_IDLE_INTERVAL_MS = 10000;
+/**
+ * URLs to try for a creature `ambient_sound` / `move_sound` ref (basename in sfx folder, relative path, site-root path, or http).
+ * @param {string} sfxBase
+ * @param {string} ref
+ * @returns {string[]}
+ */
+function creatureSoundUrlsToTry(sfxBase, ref) {
+  const s = ref.trim();
+  if (!s) return [];
+  if (/^https?:\/\//i.test(s)) return [s];
+  if (typeof document !== 'undefined') {
+    if (s.startsWith('/')) {
+      return [new URL(s, document.baseURI).href];
+    }
+    if (s.includes('/')) {
+      return [new URL(s, document.baseURI).href];
+    }
+  }
+  if (/\.(mp3|wav|ogg)$/i.test(s)) {
+    return [sfxUrl(sfxBase, s)];
+  }
+  return [sfxUrl(sfxBase, `${s}.mp3`), sfxUrl(sfxBase, `${s}.wav`)];
+}
+
+/**
+ * @param {AudioContext} ctx
+ * @param {string} sfxBase
+ * @param {unknown} ref
+ * @returns {Promise<AudioBuffer | null>}
+ */
+async function decodeCreatureSound(ctx, sfxBase, ref) {
+  if (typeof ref !== 'string' || !ref.trim()) return null;
+  for (const url of creatureSoundUrlsToTry(sfxBase, ref)) {
+    const buf = await decodeUrl(ctx, url);
+    if (buf) return buf;
+  }
+  return null;
+}
+
+/**
+ * Object ambient/move: sfx + paths first; bare names also try `public/audio/` (legacy object ambients).
+ * @param {AudioContext} ctx
+ * @param {string} sfxBase
+ * @param {string} ref
+ * @returns {Promise<AudioBuffer | null>}
+ */
+async function decodeRegistryAmbientSound(ctx, sfxBase, ref) {
+  const fromSfx = await decodeCreatureSound(ctx, sfxBase, ref);
+  if (fromSfx) return fromSfx;
+  if (typeof ref !== 'string' || !ref.trim()) return null;
+  const s = ref.trim();
+  if (/^https?:\/\//i.test(s) || s.includes('/')) return null;
+  const file = /\.(mp3|wav|ogg)$/i.test(s) ? s : `${s}.wav`;
+  return decodeUrl(ctx, assetUrl(file));
+}
 
 /** Map arbitrary floorType strings to footstep asset keys. */
 const FLOOR_TYPE_ALIASES = {
@@ -236,10 +289,25 @@ export class AudioEventBus {
     this._ambientById = new Map();
     /** @type {Map<string, SpatialSource>} */
     this._creatureById = new Map();
-    /** @type {Map<string, { source: SpatialSource; fadeOutSec: number }>} Spatial world loops (registry `worldLoop`). */
+    /** @type {Map<string, { source: SpatialSource; fadeOutSec: number }>} Spatial world loops (registry `ambient_sound`). */
     this._worldAmbientLoopsById = new Map();
     /** @type {Map<string, Record<string, unknown>>} Object `sounds` from registry, keyed by object type id. */
     this._objectSoundsByTypeId = new Map();
+    /** Registry object id → decoded `sounds.ambient_sound`. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._objectAmbientBufferByTypeId = new Map();
+    /** Registry object id → decoded `sounds.move_sound`. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._objectMoveBufferByTypeId = new Map();
+    /** Registry object id → decoded `sounds.interact_sound`. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._objectInteractBufferByTypeId = new Map();
+    /** Registry object id → `sounds.ambient_timer` (seconds between timed ambient one-shots; >0 disables looping spatial ambient). */
+    /** @type {Map<string, number>} */
+    this._objectAmbientTimerSecByTypeId = new Map();
+    /** Object instance id → timed ambient state when `ambient_timer` &gt; 0. */
+    /** @type {Map<string, { anchorMs: number; x: number; y: number; objectType: string }>} */
+    this._objectTimedAmbientByInstanceId = new Map();
 
     /** @type {SpatialSource | null} */
     this._footstepSource = null;
@@ -264,9 +332,15 @@ export class AudioEventBus {
     this._ambientBuffers = {};
     /** @type {Record<string, AudioBuffer | null>} */
     this._creatureBuffers = {};
-    /** Registry creature id → decoded `sounds.ambient` from `public/assets/sfx` (mp3/wav). */
+    /** Registry creature id → decoded `sounds.ambient_sound`. */
     /** @type {Map<string, AudioBuffer>} */
     this._creatureAmbientByTypeId = new Map();
+    /** Registry creature id → decoded `sounds.move_sound`. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._creatureMoveSoundByTypeId = new Map();
+    /** Registry creature id → `sounds.ambient_timer` (seconds between idle ambient one-shots; >0 also disables looping spatial ambient). */
+    /** @type {Map<string, number>} */
+    this._creatureAmbientTimerSecByTypeId = new Map();
     /** Registry creature id → linear gain multiplier (`volume` field, default 1). */
     /** @type {Map<string, number>} */
     this._creatureVolumeByTypeId = new Map();
@@ -307,8 +381,8 @@ export class AudioEventBus {
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._deathResetTimer = null;
 
-    /** Stalker breathing one-shots: creature id → timer anchor + grid pos (no looping stalk-breathing spatial). */
-    /** @type {Map<string, { anchorMs: number; x: number; y: number }>} */
+    /** Stalk-behavior timed ambient: instance id → timer anchor, grid pos, registry creature type. */
+    /** @type {Map<string, { anchorMs: number; x: number; y: number; creatureTypeId: string }>} */
     this._stalkerIdleGaspById = new Map();
     /** @type {ReturnType<typeof setInterval> | null} */
     this._stalkerIdleGaspInterval = null;
@@ -328,7 +402,7 @@ export class AudioEventBus {
     this._onStalkerIdleClear = this._onStalkerIdleClear.bind(this);
     this._onStalkerSpawned = this._onStalkerSpawned.bind(this);
     this._onStalkerMove = this._onStalkerMove.bind(this);
-    this._tickStalkerIdleGasp = this._tickStalkerIdleGasp.bind(this);
+    this._tickTimedAmbients = this._tickTimedAmbients.bind(this);
   }
 
   /**
@@ -357,7 +431,7 @@ export class AudioEventBus {
 
     await this._loadBuffers();
     this._createOneShotSources();
-    this._stalkerIdleGaspInterval = setInterval(this._tickStalkerIdleGasp, 1000);
+    this._stalkerIdleGaspInterval = setInterval(this._tickTimedAmbients, 1000);
     this._busInitialized = true;
   }
 
@@ -394,28 +468,70 @@ export class AudioEventBus {
   }
 
   /**
-   * Register ambient asset URLs from object registry (`sounds.ambient` → `audio/<id>.wav`).
+   * Decode object registry `ambient_sound`, `ambient_timer`, `interact_sound`, `move_sound`; fill `_objectSoundsByTypeId`.
+   * @param {AudioContext} ctx
+   * @param {string} sfxBase
    */
-  _registerObjectAmbientUrlsFromRegistry() {
+  async _loadObjectRegistrySounds(ctx, sfxBase) {
+    this._objectSoundsByTypeId.clear();
+    this._objectAmbientBufferByTypeId.clear();
+    this._objectMoveBufferByTypeId.clear();
+    this._objectInteractBufferByTypeId.clear();
+    this._objectAmbientTimerSecByTypeId.clear();
     for (const obj of objectRegistry) {
       if (!obj || typeof obj !== 'object' || typeof obj.id !== 'string') continue;
-      const sounds = obj.sounds;
-      this._objectSoundsByTypeId.set(obj.id, sounds && typeof sounds === 'object' ? sounds : {});
-      if (!sounds || typeof sounds !== 'object') continue;
-      const amb = sounds.ambient;
-      if (typeof amb === 'string' && amb && !(amb in URLS.ambient)) {
-        URLS.ambient[amb] = assetUrl(`${amb}.wav`);
+      const sounds = obj.sounds && typeof obj.sounds === 'object' ? obj.sounds : {};
+      this._objectSoundsByTypeId.set(obj.id, sounds);
+      const ambientRef =
+        typeof sounds.ambient_sound === 'string' && sounds.ambient_sound.trim()
+          ? sounds.ambient_sound.trim()
+          : null;
+      const moveRef =
+        typeof sounds.move_sound === 'string' && sounds.move_sound.trim()
+          ? sounds.move_sound.trim()
+          : null;
+      const interactRef =
+        typeof sounds.interact_sound === 'string' && sounds.interact_sound.trim()
+          ? sounds.interact_sound.trim()
+          : null;
+      const timerRaw = sounds.ambient_timer;
+      const ambientTimerSec =
+        typeof timerRaw === 'number' && Number.isFinite(timerRaw) && timerRaw > 0 ? timerRaw : null;
+      if (ambientTimerSec != null) {
+        this._objectAmbientTimerSecByTypeId.set(obj.id, ambientTimerSec);
+      }
+      if (ambientRef) {
+        const buf = await decodeRegistryAmbientSound(ctx, sfxBase, ambientRef);
+        if (buf) this._objectAmbientBufferByTypeId.set(obj.id, buf);
+      }
+      if (moveRef) {
+        const buf = await decodeRegistryAmbientSound(ctx, sfxBase, moveRef);
+        if (buf) this._objectMoveBufferByTypeId.set(obj.id, buf);
+      }
+      if (interactRef) {
+        const buf = await decodeRegistryAmbientSound(ctx, sfxBase, interactRef);
+        if (buf) this._objectInteractBufferByTypeId.set(obj.id, buf);
       }
     }
   }
 
   /**
+   * @param {string} [objectTypeId] Registry object id (e.g. `window`).
+   * @returns {boolean}
+   */
+  _objectUsesTimedAmbientOnly(objectTypeId) {
+    if (typeof objectTypeId !== 'string' || !objectTypeId) return false;
+    const s = this._objectAmbientTimerSecByTypeId.get(objectTypeId);
+    return typeof s === 'number' && Number.isFinite(s) && s > 0;
+  }
+
+  /**
    * @param {string} objectTypeId Registry object id (e.g. `key`, `door-unlocked`).
-   * @returns {string | null} `sounds.ambient` id when present.
+   * @returns {string | null} `sounds.ambient_sound` path when present.
    */
   getObjectAmbientSoundKey(objectTypeId) {
     const sounds = this._objectSoundsByTypeId.get(objectTypeId);
-    const k = sounds && typeof sounds === 'object' ? sounds.ambient : null;
+    const k = sounds && typeof sounds === 'object' ? sounds.ambient_sound : null;
     return typeof k === 'string' && k ? k : null;
   }
 
@@ -429,33 +545,44 @@ export class AudioEventBus {
   }
 
   /**
+   * Spatial loop from registry `ambient_sound` (decoded buffer) + fade seconds.
    * @param {string} objectTypeId
-   * @returns {{ sfxKey: string; fadeInSec: number; fadeOutSec: number; gain: number } | null}
+   * @returns {{ fadeInSec: number; fadeOutSec: number; gain: number } | null}
    */
-  getObjectWorldLoopConfig(objectTypeId) {
+  getObjectSpatialLoopConfig(objectTypeId) {
     const sounds = this._objectSoundsByTypeId.get(objectTypeId);
     if (!sounds || typeof sounds !== 'object') return null;
-    const sfxKey = sounds.worldLoop;
-    if (typeof sfxKey !== 'string' || !sfxKey) return null;
+    if (!this._objectAmbientBufferByTypeId.has(objectTypeId)) return null;
+    const fadeIn =
+      typeof sounds.ambient_fade_in_sec === 'number' && Number.isFinite(sounds.ambient_fade_in_sec)
+        ? sounds.ambient_fade_in_sec
+        : typeof sounds.worldLoopFadeInSec === 'number' && Number.isFinite(sounds.worldLoopFadeInSec)
+          ? sounds.worldLoopFadeInSec
+          : 0;
+    const fadeOut =
+      typeof sounds.ambient_fade_out_sec === 'number' && Number.isFinite(sounds.ambient_fade_out_sec)
+        ? sounds.ambient_fade_out_sec
+        : typeof sounds.worldLoopFadeOutSec === 'number' && Number.isFinite(sounds.worldLoopFadeOutSec)
+          ? sounds.worldLoopFadeOutSec
+          : 0;
     return {
-      sfxKey,
-      fadeInSec: typeof sounds.worldLoopFadeInSec === 'number' ? sounds.worldLoopFadeInSec : 0,
-      fadeOutSec: typeof sounds.worldLoopFadeOutSec === 'number' ? sounds.worldLoopFadeOutSec : 0,
+      fadeInSec: fadeIn,
+      fadeOutSec: fadeOut,
       gain: registryGainFromSounds(sounds, 'worldLoop'),
     };
   }
 
   /**
-   * Spatial looping SFX at a grid cell (`public/assets/sfx`), fades from registry.
+   * Spatial looping SFX at a grid cell from registry `ambient_sound` paths.
    * @param {string} trackId
    * @param {number} gridX
    * @param {number} gridY
    * @param {string} registryObjectTypeId e.g. `key`, `door-unlocked`
    */
   playRegistryObjectWorldLoop(trackId, gridX, gridY, registryObjectTypeId) {
-    const cfg = this.getObjectWorldLoopConfig(registryObjectTypeId);
+    const cfg = this.getObjectSpatialLoopConfig(registryObjectTypeId);
     if (!cfg) return;
-    const buf = this._sfxBuffers[cfg.sfxKey];
+    const buf = this._objectAmbientBufferByTypeId.get(registryObjectTypeId);
     if (!buf) return;
     this.stopWorldAmbientLoop(trackId);
     const src = audioEngine.createLoopingSpatialSource(gridX, gridY, buf, {
@@ -501,7 +628,8 @@ export class AudioEventBus {
   async _loadBuffers() {
     const ctx = audioContext;
     if (!ctx) return;
-    this._registerObjectAmbientUrlsFromRegistry();
+    const sfxBase = await resolveSfxBase();
+    await this._loadObjectRegistrySounds(ctx, sfxBase);
     if (AUDIO_ASSETS_ENABLED) {
       const entries = Object.entries(URLS.footstep);
       await Promise.all(
@@ -526,14 +654,13 @@ export class AudioEventBus {
       }),
     );
 
-    const sfxBase = await resolveSfxBase();
     await Promise.all(
       Object.entries(SFX_FILES).map(async ([key, file]) => {
         this._sfxBuffers[key] = await decodeUrl(ctx, sfxUrl(sfxBase, file));
       }),
     );
 
-    await this._loadCreatureRegistryAmbients(ctx, sfxBase);
+    await this._loadCreatureRegistrySounds(ctx, sfxBase);
 
     // On slower networks (e.g. GH Pages), music start may be requested before large files decode.
     if (this._wantBgMusic) this.startBgMusic();
@@ -542,13 +669,15 @@ export class AudioEventBus {
   }
 
   /**
-   * Decode creature registry `sounds.ambient` filenames from `public/assets/sfx` (.mp3 then .wav).
+   * Decode creature registry `ambient_sound`, `move_sound`, and store `ambient_timer` (seconds).
    * @param {AudioContext} ctx
    * @param {string} sfxBase
    */
-  async _loadCreatureRegistryAmbients(ctx, sfxBase) {
+  async _loadCreatureRegistrySounds(ctx, sfxBase) {
     this._creatureAmbientByTypeId.clear();
+    this._creatureMoveSoundByTypeId.clear();
     this._creatureVolumeByTypeId.clear();
+    this._creatureAmbientTimerSecByTypeId.clear();
     for (const cr of creatureRegistry) {
       if (!cr || typeof cr !== 'object') continue;
       const typeId = /** @type {{ id?: unknown; volume?: unknown; sounds?: unknown }} */ (cr).id;
@@ -557,17 +686,36 @@ export class AudioEventBus {
       const vol =
         typeof volRaw === 'number' && Number.isFinite(volRaw) ? Math.max(0, volRaw) : 1;
       this._creatureVolumeByTypeId.set(typeId, vol);
-      const sounds = /** @type {{ sounds?: { ambient?: unknown } }} */ (cr).sounds;
-      const ambient =
-        sounds && typeof sounds === 'object' && typeof sounds.ambient === 'string' ? sounds.ambient : null;
-      if (!ambient) continue;
-      let buf = null;
-      for (const ext of ['.mp3', '.wav']) {
-        buf = await decodeUrl(ctx, sfxUrl(sfxBase, `${ambient}${ext}`));
-        if (buf) break;
+      const sounds = /** @type {{ sounds?: Record<string, unknown> }} */ (cr).sounds;
+      const snd = sounds && typeof sounds === 'object' ? sounds : null;
+      const ambientRef = snd && typeof snd.ambient_sound === 'string' ? snd.ambient_sound : null;
+      const moveRef = snd && typeof snd.move_sound === 'string' ? snd.move_sound : null;
+      const timerRaw = snd && snd.ambient_timer;
+      const ambientTimerSec =
+        typeof timerRaw === 'number' && Number.isFinite(timerRaw) && timerRaw > 0 ? timerRaw : null;
+      if (ambientTimerSec != null) {
+        this._creatureAmbientTimerSecByTypeId.set(typeId, ambientTimerSec);
       }
-      if (buf) this._creatureAmbientByTypeId.set(typeId, buf);
+      if (ambientRef) {
+        const buf = await decodeCreatureSound(ctx, sfxBase, ambientRef);
+        if (buf) this._creatureAmbientByTypeId.set(typeId, buf);
+      }
+      if (moveRef) {
+        const buf = await decodeCreatureSound(ctx, sfxBase, moveRef);
+        if (buf) this._creatureMoveSoundByTypeId.set(typeId, buf);
+      }
     }
+  }
+
+  /**
+   * Creatures with a positive `ambient_timer` use timed one-shots only (no looping spatial ambient clip).
+   * @param {string} [typeId]
+   * @returns {boolean}
+   */
+  _creatureUsesTimedAmbientOnly(typeId) {
+    if (typeof typeId !== 'string' || !typeId) return false;
+    const s = this._creatureAmbientTimerSecByTypeId.get(typeId);
+    return typeof s === 'number' && Number.isFinite(s) && s > 0;
   }
 
   _createOneShotSources() {
@@ -702,7 +850,8 @@ export class AudioEventBus {
     if (detail && typeof detail === 'object') {
       const objectType = /** @type {{ objectType?: unknown }} */ (detail).objectType;
       if (objectType === 'door-locked') {
-        const lockedSfx = this._sfxBuffers.attemptOpenLockedDoor;
+        const regBuf = this._objectInteractBufferByTypeId.get('door-locked');
+        const lockedSfx = regBuf ?? this._sfxBuffers.attemptOpenLockedDoor;
         if (lockedSfx) {
           this._playSfx(lockedSfx, { gain: this.getRegistrySoundGain('door-locked', 'interact') });
         }
@@ -736,7 +885,8 @@ export class AudioEventBus {
   }
 
   _onKeyCollected() {
-    const sfx = this._sfxBuffers.keyGrab;
+    const regBuf = this._objectInteractBufferByTypeId.get('key');
+    const sfx = regBuf ?? this._sfxBuffers.keyGrab;
     if (sfx) {
       this._playSfx(sfx, { gain: this.getRegistrySoundGain('key', 'interact') });
     }
@@ -744,7 +894,8 @@ export class AudioEventBus {
 
   _onLevelExited() {
     this._clearSpatialWorldSources();
-    const sfx = this._sfxBuffers.openDoorWithKey;
+    const regBuf = this._objectInteractBufferByTypeId.get('door-unlocked');
+    const sfx = regBuf ?? this._sfxBuffers.openDoorWithKey;
     if (sfx) {
       const rg = this.getRegistrySoundGain('door-unlocked', 'interact');
       this._playSfx(sfx, { gain: 1.5 * rg, swapStereo: true });
@@ -753,6 +904,7 @@ export class AudioEventBus {
 
   /** Stop looping world spatial audio (level hunt cues, object ambients, creatures, engine spatial loops). */
   _clearSpatialWorldSources() {
+    this._objectTimedAmbientByInstanceId.clear();
     for (const src of this._ambientById.values()) {
       src.stop();
       this._directionalSources.delete(src);
@@ -835,7 +987,7 @@ export class AudioEventBus {
     const raw = /** @type {{ objects?: unknown }} */ (detail).objects;
     if (!Array.isArray(raw)) return;
 
-    /** @type {Map<string, { cell: string; soundKey: string; objectType: string | null }>} */
+    /** @type {Map<string, { cell: string; soundKey: string; objectType: string | null; x: number; y: number }>} */
     const next = new Map();
     for (const o of raw) {
       if (!o || typeof o !== 'object') continue;
@@ -843,10 +995,16 @@ export class AudioEventBus {
       if (typeof ob.id !== 'string') continue;
       const g = gridFromDetail(ob);
       if (!g) continue;
+      const objectType = typeof ob.type === 'string' ? ob.type : null;
       const soundKey =
         typeof ob.soundKey === 'string' && ob.soundKey in URLS.ambient ? ob.soundKey : 'default';
-      const objectType = typeof ob.type === 'string' ? ob.type : null;
-      next.set(ob.id, { cell: formatCell(g.x, g.y), soundKey, objectType });
+      next.set(ob.id, {
+        cell: formatCell(g.x, g.y),
+        soundKey,
+        objectType,
+        x: g.x,
+        y: g.y,
+      });
     }
 
     for (const [id, src] of this._ambientById) {
@@ -857,15 +1015,49 @@ export class AudioEventBus {
       }
     }
 
-    for (const [id, spec] of next) {
-      let src = this._ambientById.get(id);
-      const ambBuf = this._ambientBuffers[spec.soundKey] ?? this._ambientBuffers.default;
-      if (!ambBuf) continue;
+    for (const id of this._objectTimedAmbientByInstanceId.keys()) {
+      if (!next.has(id)) {
+        this._objectTimedAmbientByInstanceId.delete(id);
+      }
+    }
 
-      const ambGain = spec.objectType
-        ? registryGainFromSounds(this._objectSoundsByTypeId.get(spec.objectType), 'ambient')
+    for (const [id, spec] of next) {
+      const objectType = spec.objectType;
+      const regAmb = objectType ? this._objectAmbientBufferByTypeId.get(objectType) : null;
+
+      const ambGain = objectType
+        ? registryGainFromSounds(this._objectSoundsByTypeId.get(objectType), 'ambient')
         : 1;
 
+      if (objectType && this._objectUsesTimedAmbientOnly(objectType)) {
+        if (!regAmb) continue;
+        const loopSrc = this._ambientById.get(id);
+        if (loopSrc) {
+          loopSrc.stop();
+          this._directionalSources.delete(loopSrc);
+          this._ambientById.delete(id);
+        }
+        const prev = this._objectTimedAmbientByInstanceId.get(id);
+        if (prev && prev.objectType === objectType) {
+          prev.x = spec.x;
+          prev.y = spec.y;
+        } else {
+          this._objectTimedAmbientByInstanceId.set(id, {
+            anchorMs: performance.now(),
+            x: spec.x,
+            y: spec.y,
+            objectType,
+          });
+        }
+        continue;
+      }
+
+      const ambBuf = regAmb ?? this._ambientBuffers[spec.soundKey] ?? this._ambientBuffers.default;
+      if (!ambBuf) continue;
+
+      this._objectTimedAmbientByInstanceId.delete(id);
+
+      let src = this._ambientById.get(id);
       if (!src) {
         src = new SpatialSource({
           audioContext: ctx,
@@ -886,6 +1078,21 @@ export class AudioEventBus {
     }
 
     this._refreshAllDirectional();
+  }
+
+  /**
+   * When objects become movable: spatial one-shot at grid cell. Uses `move_sound`, then `ambient_sound`.
+   * @param {number} gridX
+   * @param {number} gridY
+   * @param {string} objectTypeId Registry object id
+   */
+  playObjectMoveOneShotAt(gridX, gridY, objectTypeId) {
+    const buf =
+      this._objectMoveBufferByTypeId.get(objectTypeId) ??
+      this._objectAmbientBufferByTypeId.get(objectTypeId);
+    if (!buf) return;
+    const gv = registryGainFromSounds(this._objectSoundsByTypeId.get(objectTypeId), 'ambient');
+    this._playSpatialOneShot(gridX, gridY, buf, { gain: gv });
   }
 
   /**
@@ -968,8 +1175,7 @@ export class AudioEventBus {
           this._creatureAmbientByTypeId.get(item.creatureTypeId) ??
           this._creatureBuffers.default ??
           null;
-        // Stalker breathing is timed one-shots only; looping the asset reads as ~1 Hz spam.
-        if (item.creatureTypeId === 'stalker') cBuf = null;
+        if (this._creatureUsesTimedAmbientOnly(item.creatureTypeId)) cBuf = null;
       } else {
         cBuf = this._creatureBuffers.default ?? null;
       }
@@ -1072,6 +1278,7 @@ export class AudioEventBus {
 
   _onStalkerIdleClear() {
     this._stalkerIdleGaspById.clear();
+    this._objectTimedAmbientByInstanceId.clear();
   }
 
   /**
@@ -1079,11 +1286,13 @@ export class AudioEventBus {
    */
   _onStalkerSpawned(detail) {
     if (!detail || typeof detail !== 'object') return;
-    const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown }} */ (detail);
+    const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown; creatureTypeId?: unknown }} */ (detail);
     if (typeof d.id !== 'string') return;
     const x = typeof d.x === 'number' && Number.isFinite(d.x) ? d.x : 0;
     const y = typeof d.y === 'number' && Number.isFinite(d.y) ? d.y : 0;
-    this._stalkerIdleGaspById.set(d.id, { anchorMs: performance.now(), x, y });
+    const creatureTypeId =
+      typeof d.creatureTypeId === 'string' && d.creatureTypeId ? d.creatureTypeId : 'stalker';
+    this._stalkerIdleGaspById.set(d.id, { anchorMs: performance.now(), x, y, creatureTypeId });
   }
 
   /**
@@ -1091,34 +1300,55 @@ export class AudioEventBus {
    */
   _onStalkerMove(detail) {
     if (!detail || typeof detail !== 'object') return;
-    const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown }} */ (detail);
+    const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown; creatureTypeId?: unknown }} */ (detail);
     if (typeof d.id !== 'string') return;
     const st = this._stalkerIdleGaspById.get(d.id);
     if (!st) return;
-    
+
     st.anchorMs = performance.now();
-    
+
     if (typeof d.x === 'number' && typeof d.y === 'number') {
       st.x = d.x;
       st.y = d.y;
     }
-    
-    const buf = this._creatureAmbientByTypeId.get('stalker');
+
+    const typeId =
+      (typeof d.creatureTypeId === 'string' && d.creatureTypeId
+        ? d.creatureTypeId
+        : st.creatureTypeId) ?? 'stalker';
+    const buf =
+      this._creatureMoveSoundByTypeId.get(typeId) ?? this._creatureAmbientByTypeId.get(typeId);
     if (buf) {
-      const gv = 0.85 * (this._creatureVolumeByTypeId.get('stalker') ?? 1);
+      const gv = 0.85 * (this._creatureVolumeByTypeId.get(typeId) ?? 1);
       this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
     }
   }
 
-  _tickStalkerIdleGasp() {
+  _tickTimedAmbients() {
     if (!this._busInitialized || this._deathInProgress) return;
-    const buf = this._creatureAmbientByTypeId.get('stalker');
-    if (!buf) return;
     const now = performance.now();
-    const gv = 0.85 * (this._creatureVolumeByTypeId.get('stalker') ?? 1);
     for (const [, st] of this._stalkerIdleGaspById) {
-      if (now - st.anchorMs < STALKER_IDLE_INTERVAL_MS) continue;
+      const typeId = st.creatureTypeId ?? 'stalker';
+      const buf = this._creatureAmbientByTypeId.get(typeId);
+      if (!buf) continue;
+      const sec = this._creatureAmbientTimerSecByTypeId.get(typeId);
+      const idleMs =
+        typeof sec === 'number' && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 10000;
+      if (now - st.anchorMs < idleMs) continue;
       st.anchorMs = now;
+      const gv = 0.85 * (this._creatureVolumeByTypeId.get(typeId) ?? 1);
+      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+    }
+    for (const [, st] of this._objectTimedAmbientByInstanceId) {
+      const typeId = st.objectType;
+      const buf = this._objectAmbientBufferByTypeId.get(typeId);
+      if (!buf) continue;
+      const sec = this._objectAmbientTimerSecByTypeId.get(typeId);
+      const idleMs =
+        typeof sec === 'number' && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 10000;
+      if (now - st.anchorMs < idleMs) continue;
+      st.anchorMs = now;
+      const gv = registryGainFromSounds(this._objectSoundsByTypeId.get(typeId), 'ambient');
       this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
     }
   }

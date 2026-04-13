@@ -32,7 +32,12 @@ export class Creature {
     this.pos = next;
 
     if (this._isStalker && (next.x !== px || next.y !== py)) {
-      gameEvents.emit('STALKER_MOVE', { id: this.id, x: next.x, y: next.y });
+      gameEvents.emit('STALKER_MOVE', {
+        id: this.id,
+        x: next.x,
+        y: next.y,
+        creatureTypeId: this._definition.registryCreatureId,
+      });
     }
 
     gameEvents.emit('CREATURE_TICK', {

@@ -21,7 +21,7 @@ import { gameEvents } from './src/engine/EventEmitter.js';
 
 const LEVEL_IDS = ['level_01'];
 const levelDataByIdPromise = loadAllLevelData(LEVEL_IDS);
-/** One spatial world-loop slot: key cell → door cell after unlock (see registry `worldLoop`). */
+/** One spatial world-loop slot: key cell → door cell after unlock (see registry `ambient_sound`). */
 const LEVEL_OBJECT_WORLD_LOOP_ID = 'level-object-world-loop';
 let currentLevelIndex = 0;
 /** After door unlock, `KEY_COLLECTED` must not stop the new door loop. */

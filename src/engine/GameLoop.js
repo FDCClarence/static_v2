@@ -155,7 +155,7 @@ export class GameLoop {
         creatureTypeId: reg.id,
       });
       if (reg.behavior === 'stalk') {
-        gameEvents.emit('STALKER_SPAWNED', { id: e.id, x, y });
+        gameEvents.emit('STALKER_SPAWNED', { id: e.id, x, y, creatureTypeId: reg.id });
       }
     }
 
