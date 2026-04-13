@@ -51,7 +51,6 @@ export default [
     devLabel: 'WIN',
     sounds: {
       ambient_sound: 'audio/wind-outside.wav',
-      interact_sound: 'window-rattle.wav',
     },
   },
   {
@@ -66,7 +65,7 @@ export default [
     walkable: false,
     interactable: true,
     devLabel: 'SFE',
-    sounds: { interact_sound: 'metal-click.mp3' },
+    sounds: {},
   },
   {
     id: 'key',
