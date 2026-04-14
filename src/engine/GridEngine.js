@@ -205,9 +205,15 @@ export class GridEngine {
       return;
     }
 
-    if (this._creatureAt(nx, ny)) {
+    const hitCreature = this._creatureAt(nx, ny);
+    if (hitCreature) {
       this._gameState = 'DEAD';
-      this._emitter.emit('PLAYER_DEATH', { cell: toCell(nx, ny), x: nx, y: ny });
+      this._emitter.emit('PLAYER_DEATH', {
+        cell: toCell(nx, ny),
+        x: nx,
+        y: ny,
+        creatureTypeId: hitCreature.creatureType,
+      });
       this._emitGridStateChanged();
       return;
     }
@@ -245,9 +251,15 @@ export class GridEngine {
       if (!this._inBounds(nx, ny) || this._isWall(nx, ny)) continue;
       const blockingObject = this._blockingObjectAt(nx, ny);
       if (blockingObject) continue;
-      if (this._creatureAt(nx, ny)) {
+      const hitCreature = this._creatureAt(nx, ny);
+      if (hitCreature) {
         this._gameState = 'DEAD';
-        this._emitter.emit('PLAYER_DEATH', { cell: toCell(nx, ny), x: nx, y: ny });
+        this._emitter.emit('PLAYER_DEATH', {
+          cell: toCell(nx, ny),
+          x: nx,
+          y: ny,
+          creatureTypeId: hitCreature.creatureType,
+        });
         this._emitGridStateChanged();
         return true;
       }
@@ -456,7 +468,7 @@ export class GridEngine {
    * @param {number} y
    */
   _creatureAt(x, y) {
-    return this._creatures.some((c) => c.x === x && c.y === y);
+    return this._creatures.find((c) => c.x === x && c.y === y) ?? null;
   }
 
   /**

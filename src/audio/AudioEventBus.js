@@ -361,9 +361,18 @@ export class AudioEventBus {
     /** Registry creature id → decoded `sounds.aura_sound_first_entry` buffer. */
     /** @type {Map<string, AudioBuffer>} */
     this._creatureAuraFirstEntrySoundByTypeId = new Map();
+    /** Registry creature id → decoded `sounds.kill_sound` buffer. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._creatureKillSoundByTypeId = new Map();
+    /** Registry creature id → `sounds.kill_sound_volume` gain multiplier. */
+    /** @type {Map<string, number>} */
+    this._creatureKillSoundVolumeByTypeId = new Map();
     /** Instance ids that have already had their first-entry aura sound played (never repeats). */
     /** @type {Set<string>} */
     this._creatureAuraFirstEntryFiredIds = new Set();
+    /** During aura first-entry cue, suppress all non-aura creature audio until this timestamp (ms). */
+    /** @type {number} */
+    this._creatureAuraPriorityUntilMs = 0;
     /** Last known position + typeId for every live creature (updated each CREATURE_TICK). */
     /** @type {Map<string, { x: number; y: number; creatureTypeId: string }>} */
     this._knownCreaturePositions = new Map();
@@ -414,6 +423,9 @@ export class AudioEventBus {
     this._stalkerIdleGaspById = new Map();
     /** @type {ReturnType<typeof setInterval> | null} */
     this._stalkerIdleGaspInterval = null;
+    /** Stalker instance id → current move one-shot source (for first-entry cancellation). */
+    /** @type {Map<string, SpatialSource>} */
+    this._stalkerMoveOneShotById = new Map();
 
     /** Last smoothed heading used for Resonance (matches INPUT_TICK; not raw gyro). */
     this._spatialHeading = 0;
@@ -712,6 +724,8 @@ export class AudioEventBus {
     this._creatureAuraDistanceByTypeId.clear();
     this._creatureAuraVolumeByTypeId.clear();
     this._creatureAuraFirstEntrySoundByTypeId.clear();
+    this._creatureKillSoundByTypeId.clear();
+    this._creatureKillSoundVolumeByTypeId.clear();
     for (const cr of creatureRegistry) {
       if (!cr || typeof cr !== 'object') continue;
       const typeId = /** @type {{ id?: unknown; volume?: unknown; sounds?: unknown }} */ (cr).id;
@@ -762,6 +776,15 @@ export class AudioEventBus {
       if (auraFirstRef) {
         const buf = await decodeCreatureSound(ctx, sfxBase, auraFirstRef);
         if (buf) this._creatureAuraFirstEntrySoundByTypeId.set(typeId, buf);
+      }
+      const killRef = snd && typeof snd.kill_sound === 'string' ? snd.kill_sound : null;
+      if (killRef) {
+        const buf = await decodeCreatureSound(ctx, sfxBase, killRef);
+        if (buf) this._creatureKillSoundByTypeId.set(typeId, buf);
+      }
+      const killVolumeRaw = snd && snd.kill_sound_volume;
+      if (typeof killVolumeRaw === 'number' && Number.isFinite(killVolumeRaw)) {
+        this._creatureKillSoundVolumeByTypeId.set(typeId, Math.max(0, killVolumeRaw));
       }
     }
   }
@@ -1177,12 +1200,13 @@ export class AudioEventBus {
    * @param {number} gridX
    * @param {number} gridY
    * @param {AudioBuffer} buffer
-   * @param {{ gain?: number }} [opts]
+   * @param {{ gain?: number; onEnded?: (() => void) | null }} [opts]
+   * @returns {SpatialSource | null}
    */
   _playSpatialOneShot(gridX, gridY, buffer, opts = {}) {
     const ctx = audioContext;
     const ra = audioEngine.resonanceAudio;
-    if (!ctx || !ra || !buffer) return;
+    if (!ctx || !ra || !buffer) return null;
     const gain = typeof opts.gain === 'number' ? opts.gain : 1;
     const src = new SpatialSource({
       audioContext: ctx,
@@ -1194,11 +1218,13 @@ export class AudioEventBus {
     });
     src.onPlaybackEnded = () => {
       this._directionalSources.delete(src);
+      if (typeof opts.onEnded === 'function') opts.onEnded();
       src.onPlaybackEnded = null;
     };
     this._directionalSources.add(src);
     src.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
     void ctx.resume().then(() => src.play());
+    return src;
   }
 
   /**
@@ -1239,6 +1265,7 @@ export class AudioEventBus {
 
     const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
     const seen = new Set();
+    const suppressCreatureAudio = this._isCreatureAudioSuppressed();
 
     for (const item of list) {
       seen.add(item.id);
@@ -1256,6 +1283,9 @@ export class AudioEventBus {
       } else {
         cBuf = this._creatureBuffers.default ?? null;
       }
+      // Kill collision frame: suppress creature loop audio so kill_sound is exclusive.
+      if (item.x === playerAudioGrid.x && item.y === playerAudioGrid.y) cBuf = null;
+      if (suppressCreatureAudio) cBuf = null;
 
       const audible = cBuf != null;
       const buf = cBuf ?? silent;
@@ -1328,6 +1358,8 @@ export class AudioEventBus {
     if (this._deathInProgress || this._gameOverWorldMuted) return;
     for (const [instanceId, pos] of this._knownCreaturePositions) {
       const { creatureTypeId } = pos;
+      // Kill collision frame: aura cues are suppressed; only kill_sound should play.
+      if (pos.x === px && pos.y === py) continue;
       const auraBuf = this._creatureAuraSoundByTypeId.get(creatureTypeId);
       if (!auraBuf) continue;
       const auraDist = this._creatureAuraDistanceByTypeId.get(creatureTypeId) ?? 1;
@@ -1336,11 +1368,23 @@ export class AudioEventBus {
       const wasInRange = this._creatureAuraActiveIds.has(instanceId);
       if (inRange && !wasInRange) {
         this._creatureAuraActiveIds.add(instanceId);
+        const moveSrc = this._stalkerMoveOneShotById.get(instanceId);
+        if (moveSrc) {
+          moveSrc.stop();
+          this._directionalSources.delete(moveSrc);
+          this._stalkerMoveOneShotById.delete(instanceId);
+        }
         const auraVol = this._creatureAuraVolumeByTypeId.get(creatureTypeId) ?? 1;
         if (!this._creatureAuraFirstEntryFiredIds.has(instanceId)) {
           this._creatureAuraFirstEntryFiredIds.add(instanceId);
           const firstBuf = this._creatureAuraFirstEntrySoundByTypeId.get(creatureTypeId);
           if (firstBuf) {
+            const now = performance.now();
+            this._creatureAuraPriorityUntilMs = Math.max(
+              this._creatureAuraPriorityUntilMs,
+              now + firstBuf.duration * 1000,
+            );
+            this._stopCreatureLoopSources();
             this._playSpatialOneShot(pos.x, pos.y, firstBuf, { gain: auraVol });
           }
         }
@@ -1351,9 +1395,21 @@ export class AudioEventBus {
     }
   }
 
-  _onPlayerDeath() {
+  _onPlayerDeath(detail) {
     if (this._deathInProgress) return;
     this._deathInProgress = true;
+
+    const killerTypeId =
+      detail && typeof detail === 'object' && typeof /** @type {{ creatureTypeId?: unknown }} */ (detail).creatureTypeId === 'string'
+        ? /** @type {{ creatureTypeId: string }} */ (detail).creatureTypeId
+        : null;
+    if (killerTypeId) {
+      const killBuf = this._creatureKillSoundByTypeId.get(killerTypeId);
+      if (killBuf) {
+        const killGain = this._creatureKillSoundVolumeByTypeId.get(killerTypeId) ?? 1;
+        this._playSfx(killBuf, { gain: killGain });
+      }
+    }
 
     this._clearSpatialWorldSources();
     this._onStalkerIdleClear();
@@ -1397,10 +1453,16 @@ export class AudioEventBus {
   }
 
   _onStalkerIdleClear() {
+    for (const src of this._stalkerMoveOneShotById.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
+    }
+    this._stalkerMoveOneShotById.clear();
     this._stalkerIdleGaspById.clear();
     this._objectTimedAmbientByInstanceId.clear();
     this._creatureAuraActiveIds.clear();
     this._creatureAuraFirstEntryFiredIds.clear();
+    this._creatureAuraPriorityUntilMs = 0;
     this._knownCreaturePositions.clear();
   }
 
@@ -1441,28 +1503,56 @@ export class AudioEventBus {
       (typeof d.creatureTypeId === 'string' && d.creatureTypeId
         ? d.creatureTypeId
         : st.creatureTypeId) ?? 'stalker';
+    // On kill collision, suppress move cue so death kill_sound is the only creature cue.
+    if (st.x === playerAudioGrid.x && st.y === playerAudioGrid.y) return;
+    // STALKER_MOVE can arrive just before CREATURE_TICK triggers first-entry aura logic.
+    // If this move places the creature inside aura range and first-entry hasn't fired yet,
+    // skip move audio so the first-entry cue has priority.
+    if (!this._creatureAuraFirstEntryFiredIds.has(d.id)) {
+      const firstEntryBuf = this._creatureAuraFirstEntrySoundByTypeId.get(typeId);
+      if (firstEntryBuf) {
+        const auraDist = this._creatureAuraDistanceByTypeId.get(typeId) ?? 1;
+        const chebyshev = Math.max(Math.abs(st.x - playerAudioGrid.x), Math.abs(st.y - playerAudioGrid.y));
+        if (chebyshev <= auraDist) return;
+      }
+    }
+    if (this._isCreatureAudioSuppressed()) return;
     const buf =
       this._creatureMoveSoundByTypeId.get(typeId) ?? this._creatureAmbientByTypeId.get(typeId);
     if (buf) {
       const gv = 0.85 * (this._creatureVolumeByTypeId.get(typeId) ?? 1);
-      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+      const prev = this._stalkerMoveOneShotById.get(d.id);
+      if (prev) {
+        prev.stop();
+        this._directionalSources.delete(prev);
+        this._stalkerMoveOneShotById.delete(d.id);
+      }
+      const moveSrc = this._playSpatialOneShot(st.x, st.y, buf, {
+        gain: gv,
+        onEnded: () => {
+          this._stalkerMoveOneShotById.delete(d.id);
+        },
+      });
+      if (moveSrc) this._stalkerMoveOneShotById.set(d.id, moveSrc);
     }
   }
 
   _tickTimedAmbients() {
     if (!this._busInitialized || this._deathInProgress || this._gameOverWorldMuted) return;
     const now = performance.now();
-    for (const [, st] of this._stalkerIdleGaspById) {
-      const typeId = st.creatureTypeId ?? 'stalker';
-      const buf = this._creatureAmbientByTypeId.get(typeId);
-      if (!buf) continue;
-      const sec = this._creatureAmbientTimerSecByTypeId.get(typeId);
-      const idleMs =
-        typeof sec === 'number' && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 10000;
-      if (now - st.anchorMs < idleMs) continue;
-      st.anchorMs = now;
-      const gv = 0.85 * (this._creatureVolumeByTypeId.get(typeId) ?? 1);
-      this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+    if (!this._isCreatureAudioSuppressed()) {
+      for (const [, st] of this._stalkerIdleGaspById) {
+        const typeId = st.creatureTypeId ?? 'stalker';
+        const buf = this._creatureAmbientByTypeId.get(typeId);
+        if (!buf) continue;
+        const sec = this._creatureAmbientTimerSecByTypeId.get(typeId);
+        const idleMs =
+          typeof sec === 'number' && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 10000;
+        if (now - st.anchorMs < idleMs) continue;
+        st.anchorMs = now;
+        const gv = 0.85 * (this._creatureVolumeByTypeId.get(typeId) ?? 1);
+        this._playSpatialOneShot(st.x, st.y, buf, { gain: gv });
+      }
     }
     for (const [, st] of this._objectTimedAmbientByInstanceId) {
       const typeId = st.objectType;
@@ -1488,6 +1578,7 @@ export class AudioEventBus {
     this._stalkerIdleGaspById.clear();
     this._creatureAuraActiveIds.clear();
     this._creatureAuraFirstEntryFiredIds.clear();
+    this._creatureAuraPriorityUntilMs = 0;
     this._knownCreaturePositions.clear();
 
     this._rampMasterGain(1, RAMP_TAIL_S);
@@ -1734,6 +1825,21 @@ export class AudioEventBus {
     if (this._bgMusicGain) {
       this._bgMusicGain.disconnect();
       this._bgMusicGain = null;
+    }
+  }
+
+  /**
+   * During aura first-entry cue playback, non-aura creature sounds are temporarily muted.
+   * @returns {boolean}
+   */
+  _isCreatureAudioSuppressed() {
+    return performance.now() < this._creatureAuraPriorityUntilMs;
+  }
+
+  _stopCreatureLoopSources() {
+    for (const src of this._creatureById.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
     }
   }
 }

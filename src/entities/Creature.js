@@ -51,6 +51,7 @@ export class Creature {
         cell: toCell(this.pos.x, this.pos.y),
         x: this.pos.x,
         y: this.pos.y,
+        creatureTypeId: this._definition.registryCreatureId,
       });
     }
   }

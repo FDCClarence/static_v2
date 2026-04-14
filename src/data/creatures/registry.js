@@ -15,6 +15,8 @@ export default [
       move_sound: 'stalk-breathing.wav',
       aura_sound: 'goosebumps.mp3',
       aura_sound_first_entry: 'ghost-i-see-you.mp3',
+      kill_sound: 'fah.mp3',
+      kill_sound_volume: 1,
     },
   },
 ];
