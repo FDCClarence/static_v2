@@ -3,7 +3,7 @@ export default [
   {
     id: 'stalker',
     volume: 1,
-    speed: 3,
+    speed: 4,
     hearingRadius: 6,
     behavior: 'stalk',
     devLabel: 'STK',
@@ -11,7 +11,7 @@ export default [
     aura_sound_volume: 1,
     sounds: {
       ambient_sound: 'ghost-1.mp3',
-      ambient_timer: 20,
+      ambient_timer: 10,
       move_sound: 'stalk-breathing.wav',
       aura_sound: 'goosebumps.mp3',
       aura_sound_first_entry: 'ghost-i-see-you.mp3',

@@ -113,7 +113,7 @@ const SFX_FILES = {
   keyGrab: 'key-grab.mp3',
   keySound: 'key-sound.mp3',
   findTheKey: 'barrack-find-the-key.wav',
-  findTheDoor: 'barrack-find-the-door-2.wav',
+  findTheDoor: 'barrack-find-the-door-3.mp3',
   doorBump: 'door-bump.mp3',
   attemptOpenLockedDoor: 'attempt-open-locked-door.mp3',
   openDoorWithKey: 'open-door-with-key.mp3',
@@ -291,6 +291,9 @@ export class AudioEventBus {
     this._ambientById = new Map();
     /** @type {Map<string, SpatialSource>} */
     this._creatureById = new Map();
+    /** Active non-looping world spatial one-shots (aura/move/object cues) that must be stoppable on scene transitions. */
+    /** @type {Set<SpatialSource>} */
+    this._worldOneShotSources = new Set();
     /** @type {Map<string, { source: SpatialSource; fadeOutSec: number }>} Spatial world loops (registry `ambient_sound`). */
     this._worldAmbientLoopsById = new Map();
     /** @type {Map<string, Record<string, unknown>>} Object `sounds` from registry, keyed by object type id. */
@@ -1008,6 +1011,11 @@ export class AudioEventBus {
       this._directionalSources.delete(src);
     }
     this._creatureById.clear();
+    for (const src of this._worldOneShotSources.values()) {
+      src.stop();
+      this._directionalSources.delete(src);
+    }
+    this._worldOneShotSources.clear();
     this._worldAmbientLoopsById.clear();
     audioEngine.clearSpatialLoopSources();
   }
@@ -1216,8 +1224,10 @@ export class AudioEventBus {
       loop: false,
       baseVolume: gain,
     });
+    this._worldOneShotSources.add(src);
     src.onPlaybackEnded = () => {
       this._directionalSources.delete(src);
+      this._worldOneShotSources.delete(src);
       if (typeof opts.onEnded === 'function') opts.onEnded();
       src.onPlaybackEnded = null;
     };
@@ -1368,12 +1378,6 @@ export class AudioEventBus {
       const wasInRange = this._creatureAuraActiveIds.has(instanceId);
       if (inRange && !wasInRange) {
         this._creatureAuraActiveIds.add(instanceId);
-        const moveSrc = this._stalkerMoveOneShotById.get(instanceId);
-        if (moveSrc) {
-          moveSrc.stop();
-          this._directionalSources.delete(moveSrc);
-          this._stalkerMoveOneShotById.delete(instanceId);
-        }
         const auraVol = this._creatureAuraVolumeByTypeId.get(creatureTypeId) ?? 1;
         if (!this._creatureAuraFirstEntryFiredIds.has(instanceId)) {
           this._creatureAuraFirstEntryFiredIds.add(instanceId);
@@ -1385,7 +1389,31 @@ export class AudioEventBus {
               now + firstBuf.duration * 1000,
             );
             this._stopCreatureLoopSources();
+            // Wipe every in-flight world one-shot (ambient gasps, move cues from all creatures)
+            // so aura_sound_first_entry + aura_sound play in complete isolation.
+            for (const s of this._worldOneShotSources) {
+              s.stop();
+              this._directionalSources.delete(s);
+            }
+            this._worldOneShotSources.clear();
+            this._stalkerMoveOneShotById.clear();
             this._playSpatialOneShot(pos.x, pos.y, firstBuf, { gain: auraVol });
+          } else {
+            // No first_entry buffer configured; fall back to stopping only this creature's move cue.
+            const moveSrc = this._stalkerMoveOneShotById.get(instanceId);
+            if (moveSrc) {
+              moveSrc.stop();
+              this._directionalSources.delete(moveSrc);
+              this._stalkerMoveOneShotById.delete(instanceId);
+            }
+          }
+        } else {
+          // Re-entry after first_entry has already fired: suppress only this creature's move cue.
+          const moveSrc = this._stalkerMoveOneShotById.get(instanceId);
+          if (moveSrc) {
+            moveSrc.stop();
+            this._directionalSources.delete(moveSrc);
+            this._stalkerMoveOneShotById.delete(instanceId);
           }
         }
         this._playSpatialOneShot(pos.x, pos.y, auraBuf, { gain: auraVol });
@@ -1399,6 +1427,11 @@ export class AudioEventBus {
     if (this._deathInProgress) return;
     this._deathInProgress = true;
 
+    // Wipe all world spatial sources first so kill_sound plays in isolation —
+    // no aura/move/ambient one-shots from prior ticks bleed into the death frame.
+    this._clearSpatialWorldSources();
+    this._onStalkerIdleClear();
+
     const killerTypeId =
       detail && typeof detail === 'object' && typeof /** @type {{ creatureTypeId?: unknown }} */ (detail).creatureTypeId === 'string'
         ? /** @type {{ creatureTypeId: string }} */ (detail).creatureTypeId
@@ -1410,9 +1443,6 @@ export class AudioEventBus {
         this._playSfx(killBuf, { gain: killGain });
       }
     }
-
-    this._clearSpatialWorldSources();
-    this._onStalkerIdleClear();
 
     this._rampMasterGain(0, MASTER_FADE_S);
 

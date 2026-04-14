@@ -430,9 +430,9 @@ export class GameScreen {
   _updateCompassFromHeading(headingDeg) {
     if (!Number.isFinite(headingDeg)) return;
     const h = ((headingDeg % 360) + 360) % 360;
-    // Game heading from InputManager is already 0=N, 90=E (clockwise). Do not use (360 - h); that
-    // matched raw device `alpha` in the old listener and inverts the dial vs A/D and grid facing.
-    const northDeg = h;
+    // Counterrotate by heading so the outer arrow stays locked on the calibrated starting direction
+    // (north/first direction) regardless of how the device is turned.
+    const northDeg = (360 - h) % 360;
     const roundedDeg = Math.round(h);
 
     let cardinal = 'N';
