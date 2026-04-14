@@ -432,6 +432,7 @@ export class GameScreen {
 
     this._devModeOn = on;
     this._devCanvas.style.display = on ? 'block' : 'none';
+    if (this._compass) this._compass.style.display = on ? 'none' : 'flex';
 
     this._devToggle.setAttribute('aria-checked', on ? 'true' : 'false');
     this._devToggle.classList.toggle('game-screen__dev-toggle--on', on);

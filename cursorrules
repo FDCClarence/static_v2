@@ -1,0 +1,164 @@
+# Blind Horror Game — Cursor Rules
+
+## Stack
+- Vanilla JS ES modules only. No React, no TypeScript, no framework.
+- Audio: Resonance Audio (HRTF + room modeling) for spatial 3D sound
+- Real audio assets: `.mp3` and `.wav` files loaded via fetch + decodeAudioData
+- Gyro: DeviceOrientationEvent (alpha = heading) + DeviceMotion fallback
+- Build: Vite (`server.host: true`, `Cache-Control: no-store`)
+- Data: JSON files only. Zero engine changes to add levels, objects, creatures, or rooms.
+
+## Project Structure
+```
+/src
+  /audio
+    AudioEngine.js       ← Resonance Audio wrapper + listener orientation
+    SpatialSource.js     ← Per-source node chain (splitter, gain, filter, delay, merger, Resonance panner)
+    AudioEventBus.js     ← Game events → audio reactions, asset loading, music management
+    ReverbZones.js       ← Room preset manager
+  /engine
+    GridEngine.js        ← Grid state, movement, collision, object/door logic
+    InputManager.js      ← Gyro, swipe detection, 8-way direction, smoothed heading
+    GameLoop.js          ← State machine: LOADING / PLAYING / DEAD; creature spawning
+    EventEmitter.js      ← Shared event bus
+  /entities
+    Player.js
+    Creature.js
+    ObjectEntity.js
+    /behaviors
+      StalkBehavior.js
+      DeceptiveBehavior.js
+      GuardBehavior.js
+      AmbushBehavior.js
+  /data
+    /levels              ← JSON level files (e.g. level_01.json)
+    /objects             ← registry.js (object definitions)
+    /creatures           ← registry.js (creature definitions)
+    /rooms               ← presets.json (reverb room configs)
+  /ui
+    PermissionScreen.js  ← Step 1: audio + gyro permission gate
+    LandingPage.js       ← Step 2: title, description, controls, start
+    GameScreen.js        ← Step 3: game surface + compass UI + dev overlay toggle
+    GameOverScreen.js    ← Death or level completion screen
+    DevOverlay.js        ← Grid renderer, direction arrow, object labels (dev builds only)
+index.html
+main.js
+vite.config.js
+public/assets/sfx/      ← Real audio files
+```
+
+## Screen Flow
+```
+PermissionScreen → (onGranted) → GameScreen + LandingPage (both visible)
+                                      ↓ (onStart)
+                                  GameScreen only (gameplay)
+                                      ↓ (death or exit)
+                                  GameOverScreen
+```
+Screens overlap during transitions. Each module has `show()` / `hide()` methods (`display: flex` / `display: none`). Managed by `main.js`.
+
+## Audio Chain
+Every SpatialSource uses this exact node chain:
+```
+AudioBufferSource (loop or one-shot)
+      ↓
+ChannelSplitterNode
+      ↓               ↓
+  [Left]           [Right]
+  GainNode         GainNode         ← stereo gain (currently matched L/R)
+  BiquadFilter     BiquadFilter     ← stereo filter (currently matched L/R)
+  DelayNode        DelayNode        ← stereo delay (currently matched L/R)
+      ↓               ↓
+ChannelMergerNode
+      ↓
+Resonance Audio Source
+      ↓
+Resonance Audio Room
+      ↓
+L/R Swap (splitter → merger)  ← fixes mirrored spatial image
+      ↓
+Master GainNode
+      ↓
+AudioContext.destination
+```
+
+Currently the per-ear gain/filter/delay are **not** angle-derived; they remain matched. The directional panning comes from Resonance Audio itself. If you restore angle-based per-ear adjustments, use:
+```js
+const cosAngle = Math.cos(angleTo);
+const normalized = (cosAngle + 1) / 2;
+
+gainValue    = 0.4 + (normalized * 0.6);
+filterCutoff = 800 + (normalized * 3200);
+delayTime    = (1 - Math.abs(cosAngle)) * 0.0006;
+```
+
+## Event Names — Current Active Set
+Core movement/collision:
+- `MOVE_INTENT` — InputManager → GridEngine (user swipes up)
+- `FACING_CHANGED` — InputManager emits on 8-way snap change
+- `INPUT_TICK` — InputManager emits every frame with smoothed heading
+- `PLAYER_MOVED` — GridEngine emits on successful move
+- `PLAYER_BLOCKED` — GridEngine emits on collision (wall, object, or map edge)
+- `PLAYER_DEATH` — GridEngine or Creature emits on death
+
+Level/object flow:
+- `KEY_COLLECTED` — GridEngine emits when stepping on key
+- `DOOR_UNLOCKED` — GridEngine emits after key collected (all locked doors unlock)
+- `LEVEL_EXITED` — GridEngine emits when stepping on unlocked door
+- `OBJECT_INTERACT` — GridEngine emits on interact() (unused in current flow)
+- `OBJECT_AMBIENT` — (legacy, check usage if you see it)
+
+Creatures:
+- `CREATURE_TICK` — Creature or GameLoop emits after each creature move with `{ id, pos, creatureTypeId }`
+- `STALKER_SPAWNED` — GameLoop emits when stalk-behavior creature spawns
+- `STALKER_MOVE` — Creature emits when stalker moves (plays one-shot move sound)
+- `STALKER_IDLE_CLEAR` — GameLoop emits to clear timed ambient state on level load
+
+State/reset:
+- `GRID_STATE_CHANGED` — GridEngine emits after every move with `{ grid, playerPos, facingDirection, entities }`
+- `RESET_GAME` — AudioEventBus emits 3s after death (triggers level reload)
+
+Always use EventEmitter.js as the shared bus. New event names are allowed when justified (e.g. new game mechanics), but document them here.
+
+## Grid Coordinate System
+- Internal: `{ x, y }` objects
+- JSON / display: cell strings like `"A6"` (col A–Z, row 1–N)
+- `parseCell("A6")` → `{ x: 0, y: 5 }`
+- `toCell({ x: 0, y: 5 })` → `"A6"`
+- `formatCell(0, 5)` → `"A6"` (alias of `toCell`)
+- Always convert on load (JSON → internal) and on emit (internal → display)
+
+## GameLoop States
+```
+LOADING → PLAYING → DEAD → LOADING (reset via RESET_GAME)
+```
+- Creature ticks are turn-based — called once per player move, never on a timer.
+- `DEAD` state is set by `GridEngine.markDeadState()` or when player collides with creature.
+- Level completion uses `LEVEL_EXITED` event (no separate `COMPLETE` state in current flow).
+- Random creature spawning: `__RANDOM__` cells in level JSON are resolved to floor tiles ≥4 tiles from player start.
+
+## Compass UI (GameScreen.js)
+- SVG viewBox `0 0 260 260`, center `cx=130 cy=130`, ring `r=74`
+- Inner arrow (fixed, points up — player facing): `<polygon points="130,66 142,90 130,84 118,90" fill="#fff"/>`
+- Outer north arrow (orbits ring): fixed shape `<polygon points="130,16 137,36 130,32 123,36"/>` inside `<g id="compass-north-group">`. Rotate with `transform="rotate(${(360 - alpha) % 360}, 130, 130)"` — never move the points.
+- Compass container: `pointer-events: none` — must never block swipe input
+- Responsive size: `min(100vw, 450px)` (not `min(40vw, 180px)`)
+- Gyro: use `event.alpha` from `deviceorientation`. Permission already granted by PermissionScreen — do not request again.
+- Cardinal direction + degrees displayed in center readout.
+
+## Audio Assets
+- Real audio files live in `public/assets/sfx/` (e.g. `walking-wood.mp3`, `key-grab.mp3`, `zombie-gasp.wav`).
+- `AudioEventBus` loads all assets at init via fetch + `decodeAudioData`.
+- Object registry: `sounds.ambient_sound`, `sounds.move_sound`, `sounds.interact_sound` can reference filenames or paths.
+- Creature registry: `sounds.ambient_sound`, `sounds.move_sound` work the same way.
+- `sounds.ambient_timer` (seconds): when >0, disables looping spatial ambient and fires one-shots on a timer instead.
+- `sounds.volume`, `sounds.worldLoopVolume`, `sounds.interactVolume`, etc. control per-slot linear gain (capped at 4×).
+
+## Rules — Never Break These
+1. **All AudioParam changes** must use `linearRampToValueAtTime(value, audioContext.currentTime + 0.016)` — never instant assignment.
+2. **DEV MODE** (`import.meta.env.DEV` or `?dev=1` or localhost) is development only — never leaks into production build.
+3. **No hardcoded room presets** — always load from `/src/data/rooms/presets.json`.
+4. **DevOverlay** uses `devLabel` from JSON registry for all cell labels — max 3 characters.
+5. **Test audio and gyro on device only** — gyro needs HTTPS. Use local HTTPS dev server or ngrok.
+6. **Data-driven design:** levels, objects, creatures, and rooms are JSON/JS registries. Engine code should never hardcode game content.
+7. **Spatial audio sync:** always use `InputManager.smoothedHeading` (not raw heading) for Resonance listener + directional filters to avoid jitter.
