@@ -8,6 +8,7 @@ import { Creature } from '../entities/Creature.js';
 import creatureRegistry from '../data/creatures/registry.js';
 
 const RANDOM_CREATURE_CELL = '__RANDOM__';
+const MIN_CREATURE_SPAWN_DISTANCE = 4;
 
 /**
  * Mutates level data in place: replaces creature `cell` values of `"__RANDOM__"` with a random
@@ -27,9 +28,12 @@ export function resolveRandomCreatureSpawns(levelData) {
   /** @type {Set<string>} */
   const taken = new Set();
 
+  /** @type {{ x: number; y: number } | null} */
+  let playerStartPos = null;
   const ps = d.playerStart;
   if (ps && typeof ps === 'object' && typeof /** @type {{ cell?: unknown }} */ (ps).cell === 'string') {
     const { x, y } = parseCell(/** @type {{ cell: string }} */ (ps).cell);
+    playerStartPos = { x, y };
     taken.add(`${x},${y}`);
   }
 
@@ -67,23 +71,52 @@ export function resolveRandomCreatureSpawns(levelData) {
     }
   }
 
-  for (let i = candidates.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const t = candidates[i];
-    candidates[i] = candidates[j];
-    candidates[j] = t;
+  /**
+   * 8-direction tile distance, matching the movement model.
+   * @param {{ x: number; y: number }} a
+   * @param {{ x: number; y: number }} b
+   */
+  function tileDistance(a, b) {
+    return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
   }
 
-  let pick = 0;
+  /**
+   * @param {{ x: number; y: number }[]} options
+   * @returns {{ x: number; y: number } | null}
+   */
+  function chooseSpawnCell(options) {
+    if (options.length === 0) return null;
+    if (!playerStartPos) {
+      return options[Math.floor(Math.random() * options.length)] ?? null;
+    }
+
+    const farEnough = options.filter(
+      (cell) => tileDistance(cell, playerStartPos) > MIN_CREATURE_SPAWN_DISTANCE,
+    );
+    if (farEnough.length > 0) {
+      return farEnough[Math.floor(Math.random() * farEnough.length)] ?? null;
+    }
+
+    let maxDistance = -1;
+    for (const cell of options) {
+      const dist = tileDistance(cell, playerStartPos);
+      if (dist > maxDistance) maxDistance = dist;
+    }
+    const farthest = options.filter((cell) => tileDistance(cell, playerStartPos) === maxDistance);
+    return farthest[Math.floor(Math.random() * farthest.length)] ?? null;
+  }
+
   for (const c of creatures) {
     if (!c || typeof c !== 'object') continue;
     const e = /** @type {{ cell?: unknown }} */ (c);
     if (e.cell !== RANDOM_CREATURE_CELL) continue;
-    if (pick >= candidates.length) break;
-    const { x, y } = candidates[pick];
-    pick += 1;
+    const picked = chooseSpawnCell(candidates);
+    if (!picked) break;
+    const { x, y } = picked;
     taken.add(`${x},${y}`);
     e.cell = toCell(x, y);
+    const index = candidates.findIndex((cell) => cell.x === x && cell.y === y);
+    if (index >= 0) candidates.splice(index, 1);
   }
 }
 

@@ -380,6 +380,9 @@ export class AudioEventBus {
     this._deathInProgress = false;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._deathResetTimer = null;
+    /** While the game-over overlay is up: no spatial world / creature / object gameplay SFX. */
+    /** @type {boolean} */
+    this._gameOverWorldMuted = false;
 
     /** Stalk-behavior timed ambient: instance id → timer anchor, grid pos, registry creature type. */
     /** @type {Map<string, { anchorMs: number; x: number; y: number; creatureTypeId: string }>} */
@@ -580,6 +583,7 @@ export class AudioEventBus {
    * @param {string} registryObjectTypeId e.g. `key`, `door-unlocked`
    */
   playRegistryObjectWorldLoop(trackId, gridX, gridY, registryObjectTypeId) {
+    if (this._gameOverWorldMuted) return;
     const cfg = this.getObjectSpatialLoopConfig(registryObjectTypeId);
     if (!cfg) return;
     const buf = this._objectAmbientBufferByTypeId.get(registryObjectTypeId);
@@ -602,6 +606,7 @@ export class AudioEventBus {
    * @param {string} soundKey Ambient id from object registry (decoded into `_ambientBuffers`).
    */
   playWorldAmbientLoop(trackId, gridX, gridY, soundKey) {
+    if (this._gameOverWorldMuted) return;
     this.stopWorldAmbientLoop(trackId);
     const buf = this._ambientBuffers[soundKey];
     if (!buf) return;
@@ -821,6 +826,8 @@ export class AudioEventBus {
     }
     this._syncSpatialAudio(this._headingForSpatial());
 
+    if (this._gameOverWorldMuted) return;
+
     const walkSfx = this._sfxBuffers.walkingWood;
     if (walkSfx) {
       this._playSfx(walkSfx, { gain: 0.2, playbackRate: 1.5 });
@@ -847,6 +854,7 @@ export class AudioEventBus {
 
   _onPlayerBlocked(detail) {
     tryBlockedMoveVibrate();
+    if (this._gameOverWorldMuted) return;
     if (detail && typeof detail === 'object') {
       const objectType = /** @type {{ objectType?: unknown }} */ (detail).objectType;
       if (objectType === 'door-locked') {
@@ -885,6 +893,7 @@ export class AudioEventBus {
   }
 
   _onKeyCollected() {
+    if (this._gameOverWorldMuted) return;
     const regBuf = this._objectInteractBufferByTypeId.get('key');
     const sfx = regBuf ?? this._sfxBuffers.keyGrab;
     if (sfx) {
@@ -980,6 +989,7 @@ export class AudioEventBus {
    * @param {unknown} detail
    */
   _onObjectAmbient(detail) {
+    if (this._gameOverWorldMuted) return;
     const ctx = audioContext;
     const ra = audioEngine.resonanceAudio;
     if (!ctx || !ra || !detail || typeof detail !== 'object') return;
@@ -1087,6 +1097,7 @@ export class AudioEventBus {
    * @param {string} objectTypeId Registry object id
    */
   playObjectMoveOneShotAt(gridX, gridY, objectTypeId) {
+    if (this._gameOverWorldMuted) return;
     const buf =
       this._objectMoveBufferByTypeId.get(objectTypeId) ??
       this._objectAmbientBufferByTypeId.get(objectTypeId);
@@ -1129,7 +1140,7 @@ export class AudioEventBus {
    * `creatures[]` (legacy) or `{ id, pos, creatureTypeId }` from {@link GameLoop} / {@link Creature}.
    */
   _onCreatureTick(detail) {
-    if (this._deathInProgress) return;
+    if (this._deathInProgress || this._gameOverWorldMuted) return;
     const ctx = audioContext;
     const ra = audioEngine.resonanceAudio;
     if (!ctx || !ra || !detail || typeof detail !== 'object') return;
@@ -1285,6 +1296,7 @@ export class AudioEventBus {
    * @param {unknown} detail
    */
   _onStalkerSpawned(detail) {
+    if (this._gameOverWorldMuted) return;
     if (!detail || typeof detail !== 'object') return;
     const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown; creatureTypeId?: unknown }} */ (detail);
     if (typeof d.id !== 'string') return;
@@ -1299,6 +1311,7 @@ export class AudioEventBus {
    * @param {unknown} detail
    */
   _onStalkerMove(detail) {
+    if (this._gameOverWorldMuted) return;
     if (!detail || typeof detail !== 'object') return;
     const d = /** @type {{ id?: unknown; x?: unknown; y?: unknown; creatureTypeId?: unknown }} */ (detail);
     if (typeof d.id !== 'string') return;
@@ -1325,7 +1338,7 @@ export class AudioEventBus {
   }
 
   _tickTimedAmbients() {
-    if (!this._busInitialized || this._deathInProgress) return;
+    if (!this._busInitialized || this._deathInProgress || this._gameOverWorldMuted) return;
     const now = performance.now();
     for (const [, st] of this._stalkerIdleGaspById) {
       const typeId = st.creatureTypeId ?? 'stalker';
@@ -1547,6 +1560,20 @@ export class AudioEventBus {
         /* */
       }
     });
+  }
+
+  /**
+   * Stops spatial world audio (creatures, object loops, ambients) while the game-over UI is visible.
+   * Level reload after death still runs; this prevents new world SFX until {@link resumeWorldAudioAfterGameOver}.
+   */
+  suspendWorldAudioForGameOver() {
+    this._gameOverWorldMuted = true;
+    this._clearSpatialWorldSources();
+    this._onStalkerIdleClear();
+  }
+
+  resumeWorldAudioAfterGameOver() {
+    this._gameOverWorldMuted = false;
   }
 
   stopGameOverMusic() {

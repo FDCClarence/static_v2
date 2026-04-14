@@ -38,6 +38,7 @@ void audioEventBus.init({ inputManager });
 const landingPage = new LandingPage();
 landingPage.onStart = async () => {
   audioEventBus.stopGameOverMusic();
+  audioEventBus.resumeWorldAudioAfterGameOver();
   audioEventBus.stopLandingMusic();
   landingPage.hide();
   gameOverScreen.hide();
@@ -68,6 +69,7 @@ landingPage.onStart = async () => {
 
 gameOverScreen.onBackToLanding = () => {
   audioEventBus.stopBgMusic();
+  audioEventBus.resumeWorldAudioAfterGameOver();
   audioEventBus.startLandingMusic();
   gameOverScreen.hide();
   gameScreen.hide();
@@ -79,9 +81,10 @@ gameEvents.on('LEVEL_EXITED', async () => {
   const nextLevelIndex = currentLevelIndex + 1;
   if (nextLevelIndex >= LEVEL_IDS.length) {
     audioEventBus.stopBgMusic();
+    audioEventBus.suspendWorldAudioForGameOver();
     audioEventBus.startGameOverMusic();
     gameScreen.hide();
-    gameOverScreen.show();
+    gameOverScreen.show('escaped');
     return;
   }
   currentLevelIndex = nextLevelIndex;
@@ -89,8 +92,10 @@ gameEvents.on('LEVEL_EXITED', async () => {
 });
 
 gameEvents.on('PLAYER_DEATH', () => {
+  audioEventBus.stopBgMusic();
+  audioEventBus.suspendWorldAudioForGameOver();
   gameScreen.hide();
-  gameOverScreen.show();
+  gameOverScreen.show('died');
 });
 
 gameEvents.on('KEY_COLLECTED', () => {
@@ -164,8 +169,10 @@ async function startLevel(levelIndex) {
   if (!levelId) return;
   inputManager.calibrateNorthForLevelStart();
   const allLevels = await levelDataByIdPromise;
-  const levelData = allLevels[levelId];
-  if (!levelData) return;
+  const baseLevelData = allLevels[levelId];
+  if (!baseLevelData) return;
+  // Use a fresh copy each run because random creature spawn resolution mutates `creatures[].cell`.
+  const levelData = JSON.parse(JSON.stringify(baseLevelData));
   audioEventBus.clearWorldAmbientLoops();
   suppressKeyCollectWorldStop = false;
   resolveRandomCreatureSpawns(levelData);

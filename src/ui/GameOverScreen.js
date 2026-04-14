@@ -6,6 +6,10 @@ export class GameOverScreen {
     this.onBackToLanding = null;
     /** @type {HTMLDivElement | null} */
     this._root = null;
+    /** @type {HTMLHeadingElement | null} */
+    this._title = null;
+    /** @type {HTMLParagraphElement | null} */
+    this._subtitle = null;
     this.render();
   }
 
@@ -79,6 +83,8 @@ export class GameOverScreen {
       </div>
     `;
 
+    this._title = root.querySelector('.game-over-screen__title');
+    this._subtitle = root.querySelector('.game-over-screen__subtitle');
     const button = root.querySelector('.game-over-screen__button');
     button?.addEventListener('click', () => {
       this.onBackToLanding?.();
@@ -89,8 +95,18 @@ export class GameOverScreen {
     this.hide();
   }
 
-  show() {
+  /**
+   * @param {'escaped' | 'died'} outcome
+   */
+  show(outcome = 'escaped') {
     if (!this._root) return;
+    if (this._title) {
+      this._title.textContent = outcome === 'died' ? 'YOU DIED' : 'YOU ESCAPED';
+    }
+    if (this._subtitle) {
+      this._subtitle.textContent =
+        outcome === 'died' ? 'Your run ended before the exit.' : 'You escaped every level.';
+    }
     this._root.style.display = 'flex';
     this._root.setAttribute('aria-hidden', 'false');
   }
