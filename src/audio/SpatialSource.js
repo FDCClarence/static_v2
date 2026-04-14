@@ -43,6 +43,7 @@ export class SpatialSource {
     this._gridPos = parseCell(cell);
 
     this._preSplitMerger = audioContext.createChannelMerger(2);
+    this._frontBackFilter = audioContext.createBiquadFilter();
     this._splitter = audioContext.createChannelSplitter(2);
     this._gainL = audioContext.createGain();
     this._gainR = audioContext.createGain();
@@ -51,15 +52,20 @@ export class SpatialSource {
     this._delayL = audioContext.createDelay(1);
     this._delayR = audioContext.createDelay(1);
     this._merger = audioContext.createChannelMerger(2);
+    this._frontGainNode = audioContext.createGain();
 
+    this._frontBackFilter.type = 'lowpass';
+    this._frontBackFilter.frequency.value = 20000;
     for (const f of [this._filterL, this._filterR]) {
       f.type = 'lowpass';
       f.frequency.value = 800;
     }
     this._delayL.delayTime.value = 0;
     this._delayR.delayTime.value = 0;
+    this._frontGainNode.gain.value = 1;
 
-    this._preSplitMerger.connect(this._splitter);
+    this._preSplitMerger.connect(this._frontBackFilter);
+    this._frontBackFilter.connect(this._splitter);
     this._splitter.connect(this._gainL, 0);
     this._splitter.connect(this._gainR, 1);
     this._gainL.connect(this._filterL);
@@ -70,7 +76,8 @@ export class SpatialSource {
     this._delayR.connect(this._merger, 0, 1);
 
     this._resSource = resonanceAudio.createSource();
-    this._merger.connect(this._resSource.input);
+    this._merger.connect(this._frontGainNode);
+    this._frontGainNode.connect(this._resSource.input);
 
     /** Mono envelope before splitter (buffer path only; streams connect straight to {@link _preSplitMerger}). */
     this._envelopeGain = audioContext.createGain();
@@ -121,6 +128,22 @@ export class SpatialSource {
     this._lastListenerHeadingDeg = listenerHeadingDeg;
 
     this._syncResonancePosition();
+
+    // Angle between player's facing direction and direction to this source.
+    // Heading 0 = North = -y in grid space; 90 = East = +x.
+    const headingRad = (listenerHeadingDeg * Math.PI) / 180;
+    const faceX = Math.sin(headingRad);
+    const faceY = -Math.cos(headingRad);
+    const dx = this._gridPos.x - listenerGridPos.x;
+    const dy = this._gridPos.y - listenerGridPos.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const cosAngle = faceX * (dx / dist) + faceY * (dy / dist);
+    const normalized = (cosAngle + 1) / 2; // 0 = rear, 1 = front
+
+    const frontBackCutoff =
+      cosAngle > 0 ? 20000 : 800 + (cosAngle + 1) * 3600;
+    const frontGain = 0.85 + normalized * 0.3;
+
     const vol = this._baseVolume * this._userVolume;
     const cutoff = 3200;
     this._ramp(this._gainL.gain, vol);
@@ -129,6 +152,8 @@ export class SpatialSource {
     this._ramp(this._filterR.frequency, cutoff);
     this._ramp(this._delayL.delayTime, 0);
     this._ramp(this._delayR.delayTime, 0);
+    this._ramp(this._frontBackFilter.frequency, frontBackCutoff);
+    this._ramp(this._frontGainNode.gain, frontGain);
   }
 
   /**

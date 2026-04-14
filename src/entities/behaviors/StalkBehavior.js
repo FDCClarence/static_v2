@@ -1,10 +1,4 @@
-import objectRegistry from '../../data/objects/registry.js';
 import { parseCell } from '../../engine/GridEngine.js';
-
-/** @type {Map<string, { walkable?: boolean }>} */
-const walkableByTypeId = new Map(
-  objectRegistry.map((entry) => [entry.id, { walkable: entry.walkable === true }]),
-);
 
 /**
  * @param {unknown} grid
@@ -50,10 +44,8 @@ function isBlocked(x, y, playerPos, terrain, typeAt) {
 
   const v = terrain[y]?.[x];
   if (v === 1) return true;
-  if (v === 2) {
-    const t = typeAt.get(`${x},${y}`);
-    return walkableByTypeId.get(t ?? '')?.walkable !== true;
-  }
+  if (v === 2) return true;
+  if (typeAt.has(`${x},${y}`)) return true;
   return false;
 }
 

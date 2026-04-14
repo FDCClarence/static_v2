@@ -73,7 +73,7 @@ export default [
     interactable: true,
     devLabel: 'KEY',
     sounds: {
-      volume: 3.2,
+      volume: 4,
       ambient_sound: 'key-sound.mp3',
       ambient_fade_in_sec: 1,
       ambient_fade_out_sec: 1,
