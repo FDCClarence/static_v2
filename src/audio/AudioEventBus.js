@@ -101,9 +101,6 @@ const URLS = {
   },
   bump: assetUrl('bump.wav'),
   death: assetUrl('death.wav'),
-  ambient: {
-    default: assetUrl('ambient_default.wav'),
-  },
   creature: {
     default: assetUrl('creature_default.wav'),
   },
