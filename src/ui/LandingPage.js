@@ -46,7 +46,7 @@ export class LandingPage {
 
         .landing-page__title {
           margin: 0;
-          font-size: 42px;
+          font-size: 28px;
           font-weight: 400;
           color: #f0f0f0;
           letter-spacing: 0.08em;
@@ -177,7 +177,7 @@ export class LandingPage {
 
     root.innerHTML = `
       <div class="landing-page__inner">
-        <h1 class="landing-page__title">when the when the blind get certified&#9996; &#128557; &#129344;</h1>
+        <h3 class="landing-page__title">when the when the blindness kicks in and the pain of baldness momentarily fades away...&#9996; &#128557; &#129344;</h3>
         <p class="landing-page__tagline">monkey no eye &#129318; &#128065;. monkey only ear &#128066;</p>
         <hr class="landing-page__divider" aria-hidden="true" />
         <div class="landing-page__controls">
