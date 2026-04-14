@@ -45,22 +45,6 @@ export default [
     sounds: { bump: 'chair-scrape' },
   },
   {
-    id: 'window',
-    walkable: false,
-    interactable: true,
-    devLabel: 'WIN',
-    sounds: {
-      ambient_sound: 'audio/wind-outside.wav',
-    },
-  },
-  {
-    id: 'hole',
-    walkable: true,
-    interactable: false,
-    devLabel: 'HOL',
-    sounds: { ambient_sound: 'audio/deep-hum.wav' },
-  },
-  {
     id: 'safe',
     walkable: false,
     interactable: true,

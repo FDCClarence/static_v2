@@ -3,7 +3,7 @@ export default [
   {
     id: 'stalker',
     volume: 1.5,
-    speed: 4,
+    speed: 5,
     hearingRadius: 6,
     behavior: 'stalk',
     devLabel: 'STK',
