@@ -2,7 +2,7 @@
 export default [
   {
     id: 'stalker',
-    volume: 1,
+    volume: 1.5,
     speed: 4,
     hearingRadius: 6,
     behavior: 'stalk',

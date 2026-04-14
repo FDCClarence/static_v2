@@ -32,6 +32,10 @@ export class GameScreen {
     this._compassNorthGroup = null;
     /** @type {SVGPolygonElement | null} */
     this._compassInnerArrow = null;
+    /** @type {SVGPolygonElement | null} */
+    this._compassOuterArrow = null;
+    /** @type {SVGTextElement | null} */
+    this._compassOuterLabel = null;
     /** @type {HTMLDivElement | null} */
     this._compassCardinal = null;
     /** @type {HTMLDivElement | null} */
@@ -39,6 +43,9 @@ export class GameScreen {
 
     this._devModeOn = false;
     this._gameReparented = false;
+    this._forwardDangerActive = false;
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._dangerVibrateInterval = null;
 
     this._onResize = this._onResize.bind(this);
     this._onDevToggle = this._onDevToggle.bind(this);
@@ -58,17 +65,99 @@ export class GameScreen {
     const d = /** @type {Record<string, unknown>} */ (detail);
     const ft =
       d.forwardThreat && typeof d.forwardThreat === 'object'
-        ? /** @type {{ isUnsafe?: unknown }} */ (d.forwardThreat)
+        ? /** @type {{ isUnsafe?: unknown; isHostile?: unknown; isBlocked?: unknown }} */ (d.forwardThreat)
         : null;
-    this._setCompassForwardDanger(ft?.isUnsafe === true);
+    const nearbyCreature = this._hasCreatureWithinOneTile(d.playerPos, d.entities);
+    const dangerType =
+      ft?.isHostile === true
+        ? 'hostile'
+        : nearbyCreature
+          ? 'proximity'
+          : ft?.isBlocked === true
+            ? 'blocked'
+            : 'none';
+    this._setCompassForwardDanger(dangerType);
     this.updateDevOverlay(d.grid, d.playerPos, d.facingDirection, d.entities);
+  }
+
+  /**
+   * @param {{ x?: unknown; y?: unknown } | unknown} playerPos
+   * @param {unknown} entities
+   * @returns {boolean}
+   */
+  _hasCreatureWithinOneTile(playerPos, entities) {
+    if (!playerPos || typeof playerPos !== 'object' || !Array.isArray(entities)) return false;
+    const px = /** @type {{ x?: unknown }} */ (playerPos).x;
+    const py = /** @type {{ y?: unknown }} */ (playerPos).y;
+    if (typeof px !== 'number' || typeof py !== 'number') return false;
+
+    for (const raw of entities) {
+      if (!raw || typeof raw !== 'object') continue;
+      const e = /** @type {{ kind?: unknown; x?: unknown; y?: unknown }} */ (raw);
+      if (e.kind !== 'creature' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
+      const chebyshev = Math.max(Math.abs(e.x - px), Math.abs(e.y - py));
+      if (chebyshev === 1) return true;
+    }
+    return false;
+  }
+
+  /**
+   * @param {'none' | 'blocked' | 'hostile' | 'proximity'} dangerType
+   */
+  _setCompassForwardDanger(dangerType) {
+    const isHostile = dangerType === 'hostile';
+    const isBlocked = dangerType === 'blocked';
+    const isProximity = dangerType === 'proximity';
+    const hasTint = isHostile || isBlocked || isProximity;
+
+    this._compass?.classList.toggle('game-screen__compass--danger', hasTint);
+    this._compass?.classList.toggle('game-screen__compass--danger-blocked', dangerType === 'blocked');
+    this._compass?.classList.toggle('game-screen__compass--danger-hostile', dangerType === 'hostile');
+    this._compass?.classList.toggle('game-screen__compass--danger-proximity', dangerType === 'proximity');
+    this._compassInnerArrow?.classList.toggle('game-screen__compass-inner-arrow--vibrating', isHostile);
+    this._compassCardinal?.classList.toggle('game-screen__compass-cardinal--vibrating', isHostile);
+    this._compassDegrees?.classList.toggle('game-screen__compass-degrees--vibrating', isHostile);
+    this._compassInnerArrow?.classList.toggle('game-screen__compass-inner-arrow--vibrating-soft', isProximity);
+    this._compassCardinal?.classList.toggle('game-screen__compass-cardinal--vibrating-soft', isProximity);
+    this._compassDegrees?.classList.toggle('game-screen__compass-degrees--vibrating-soft', isProximity);
+    this._syncDangerVibration(isHostile);
   }
 
   /**
    * @param {boolean} isDanger
    */
-  _setCompassForwardDanger(isDanger) {
-    this._compassInnerArrow?.classList.toggle('game-screen__compass-inner-arrow--danger', isDanger);
+  _syncDangerVibration(isDanger) {
+    if (this._forwardDangerActive === isDanger) return;
+    this._forwardDangerActive = isDanger;
+
+    if (this._dangerVibrateInterval) {
+      clearInterval(this._dangerVibrateInterval);
+      this._dangerVibrateInterval = null;
+    }
+
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+
+    if (isDanger) {
+      try {
+        navigator.vibrate(120);
+      } catch {
+        /* */
+      }
+      this._dangerVibrateInterval = setInterval(() => {
+        try {
+          navigator.vibrate(120);
+        } catch {
+          /* */
+        }
+      }, 500);
+      return;
+    }
+
+    try {
+      navigator.vibrate(0);
+    } catch {
+      /* */
+    }
   }
 
   render() {
@@ -119,6 +208,10 @@ export class GameScreen {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
 
+        .game-screen__compass--danger {
+          color: #ff7d7d;
+        }
+
         .game-screen__compass-svg {
           width: min(100vw, 450px);
           height: min(100vw, 450px);
@@ -133,9 +226,9 @@ export class GameScreen {
 
         .game-screen__compass-readout {
           position: absolute;
-          top: 50%;
+          top: 53%;
           left: 50%;
-          transform: translate(-50%, -50%);
+          transform: translate(-50%, -53%);
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -148,6 +241,7 @@ export class GameScreen {
           line-height: 1;
           letter-spacing: 0.05em;
           color: #fff;
+          transition: color 220ms ease;
         }
 
         .game-screen__compass-degrees {
@@ -155,6 +249,7 @@ export class GameScreen {
           font-size: clamp(22px, 4vw, 28px);
           line-height: 1.2;
           color: #666;
+          transition: color 220ms ease;
         }
 
         .game-screen__compass-arrows {
@@ -176,23 +271,164 @@ export class GameScreen {
 
         .game-screen__compass-arrow-up {
           border-bottom: 10px solid #fff;
+          transition: border-bottom-color 220ms ease;
         }
 
         .game-screen__compass-arrow-down {
           border-top: 10px solid #fff;
+          transition: border-top-color 220ms ease;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-arrow-up {
+          border-bottom-color: #7f1d1d;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-arrow-down {
+          border-top-color: #7f1d1d;
+        }
+
+        .game-screen__compass--danger-blocked .game-screen__compass-arrow-up {
+          border-bottom-color: #ffd5d5;
+        }
+
+        .game-screen__compass--danger-blocked .game-screen__compass-arrow-down {
+          border-top-color: #ffd5d5;
+        }
+
+        .game-screen__compass--danger-proximity .game-screen__compass-arrow-up {
+          border-bottom-color: #ffb3b3;
+        }
+
+        .game-screen__compass--danger-proximity .game-screen__compass-arrow-down {
+          border-top-color: #ffb3b3;
         }
 
         .game-screen__compass-hint {
           margin-top: 8px;
-          font-size: clamp(9px, 2vw, 11px);
+          font-size: clamp(11px, 3vw, 13px);
           line-height: 1.2;
-          color: rgba(255, 255, 255, 0.25);
+          color: rgba(255, 255, 255, 0.65);
           text-transform: lowercase;
+          transition: color 220ms ease;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-cardinal,
+        .game-screen__compass--danger-hostile .game-screen__compass-degrees,
+        .game-screen__compass--danger-hostile .game-screen__compass-hint {
+          color: #7f1d1d;
+        }
+
+        .game-screen__compass--danger-blocked .game-screen__compass-cardinal,
+        .game-screen__compass--danger-blocked .game-screen__compass-degrees,
+        .game-screen__compass--danger-blocked .game-screen__compass-hint {
+          color: #ffd5d5;
+        }
+
+        .game-screen__compass--danger-proximity .game-screen__compass-cardinal,
+        .game-screen__compass--danger-proximity .game-screen__compass-degrees,
+        .game-screen__compass--danger-proximity .game-screen__compass-hint {
+          color: #ffb3b3;
         }
 
         .game-screen__compass-outer-arrow {
           fill: #fff;
           opacity: 0.55;
+          transition: fill 220ms ease, opacity 220ms ease;
+        }
+
+        .game-screen__compass-outer-label {
+          fill: #fff;
+          opacity: 0.9;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-anchor: middle;
+          transition: fill 220ms ease, opacity 220ms ease;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-svg circle {
+          stroke: #7f1d1d;
+        }
+
+        .game-screen__compass--danger-blocked .game-screen__compass-svg circle {
+          stroke: #ffd5d5;
+        }
+
+        .game-screen__compass--danger-proximity .game-screen__compass-svg circle {
+          stroke: #ffb3b3;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-inner-arrow {
+          fill: #7f1d1d;
+          opacity: 0.95;
+        }
+
+        .game-screen__compass--danger-blocked .game-screen__compass-inner-arrow {
+          fill: #ffd5d5;
+          opacity: 0.95;
+        }
+
+        .game-screen__compass--danger-proximity .game-screen__compass-inner-arrow {
+          fill: #ffb3b3;
+          opacity: 0.92;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-outer-arrow,
+        .game-screen__compass--danger-hostile .game-screen__compass-outer-label {
+          fill: #7f1d1d;
+          opacity: 0.92;
+        }
+
+        .game-screen__compass--danger-proximity .game-screen__compass-outer-arrow,
+        .game-screen__compass--danger-proximity .game-screen__compass-outer-label {
+          fill: #ffb3b3;
+          opacity: 0.88;
+        }
+
+        .game-screen__compass-inner-arrow--vibrating,
+        .game-screen__compass-cardinal--vibrating,
+        .game-screen__compass-degrees--vibrating {
+          animation: compass-danger-jitter 55ms linear infinite;
+          transform-box: fill-box;
+          transform-origin: center;
+        }
+
+        .game-screen__compass-inner-arrow--vibrating-soft,
+        .game-screen__compass-cardinal--vibrating-soft,
+        .game-screen__compass-degrees--vibrating-soft {
+          animation: compass-danger-jitter-soft 120ms linear infinite;
+          transform-box: fill-box;
+          transform-origin: center;
+        }
+
+        .game-screen__compass--danger-hostile .game-screen__compass-svg circle {
+          animation: compass-ring-jitter 45ms linear infinite;
+        }
+
+        @keyframes compass-danger-jitter {
+          0% { transform: translate(0px, 0px) rotate(0deg); }
+          20% { transform: translate(2.1px, -1.7px) rotate(1.2deg); }
+          40% { transform: translate(-2.4px, 1.6px) rotate(-1.4deg); }
+          60% { transform: translate(1.9px, 1.7px) rotate(1deg); }
+          80% { transform: translate(-2px, -1.5px) rotate(-1.1deg); }
+          100% { transform: translate(0px, 0px) rotate(0deg); }
+        }
+
+        @keyframes compass-danger-jitter-soft {
+          0% { transform: translate(0px, 0px) rotate(0deg); }
+          25% { transform: translate(0.7px, -0.6px) rotate(0.35deg); }
+          50% { transform: translate(-0.9px, 0.7px) rotate(-0.4deg); }
+          75% { transform: translate(0.6px, 0.5px) rotate(0.3deg); }
+          100% { transform: translate(0px, 0px) rotate(0deg); }
+        }
+
+        @keyframes compass-ring-jitter {
+          0% { transform: translate(0px, 0px); }
+          20% { transform: translate(1.8px, -1.6px); }
+          40% { transform: translate(-2.2px, 1.8px); }
+          60% { transform: translate(2px, 1.4px); }
+          80% { transform: translate(-1.9px, -1.7px); }
+          100% { transform: translate(0px, 0px); }
         }
 
         .game-screen__compass-inner-arrow {
@@ -201,10 +437,12 @@ export class GameScreen {
           transition: fill 220ms ease, opacity 220ms ease;
         }
 
-        .game-screen__compass-inner-arrow--danger {
-          fill: #7f1d1d;
-          opacity: 0.95;
+        .game-screen__compass-svg circle {
+          transition: stroke 220ms ease;
+          transform-box: fill-box;
+          transform-origin: center;
         }
+
       `;
       if (IS_DEV) {
         css += `
@@ -371,6 +609,7 @@ export class GameScreen {
               points="130,66 142,90 130,84 118,90"
             ></polygon>
             <g id="compass-north-group">
+              <text class="game-screen__compass-outer-label" x="130" y="12">N</text>
               <polygon
                 class="game-screen__compass-outer-arrow"
                 points="130,16 137,36 130,32 123,36"
@@ -395,6 +634,8 @@ export class GameScreen {
     this._compass = root.querySelector('.game-screen__compass');
     this._compassNorthGroup = root.querySelector('#compass-north-group');
     this._compassInnerArrow = root.querySelector('.game-screen__compass-inner-arrow');
+    this._compassOuterArrow = root.querySelector('.game-screen__compass-outer-arrow');
+    this._compassOuterLabel = root.querySelector('.game-screen__compass-outer-label');
     this._compassCardinal = root.querySelector('.game-screen__compass-cardinal');
     this._compassDegrees = root.querySelector('.game-screen__compass-degrees');
 
@@ -537,6 +778,7 @@ export class GameScreen {
     if (IS_DEV && this._devModeOn) {
       this.setDevMode(false);
     }
+    this._syncDangerVibration(false);
     this._root.style.display = 'none';
     window.removeEventListener('resize', this._onResize);
     gameEvents.off('INPUT_TICK', this._onInputTick);

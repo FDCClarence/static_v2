@@ -20,8 +20,6 @@ import { LandingPage } from './src/ui/LandingPage.js';
 import { GameOverScreen } from './src/ui/GameOverScreen.js';
 import { gameEvents } from './src/engine/EventEmitter.js';
 
-StaticOverlay.mount();
-
 const LEVEL_IDS = ['level_01'];
 const levelDataByIdPromise = loadAllLevelData(LEVEL_IDS);
 /** One spatial world-loop slot: key cell → door cell after unlock (see registry `ambient_sound`). */
@@ -128,6 +126,7 @@ const permissionScreen = new PermissionScreen();
 permissionScreen.onGranted = () => {
   inputManager.attachSensorsAfterUserGesture();
   permissionScreen.hide();
+  StaticOverlay.mount();
   gameScreen.show();
   landingPage.show();
   audioEventBus.startLandingMusic();

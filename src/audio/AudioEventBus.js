@@ -1233,7 +1233,12 @@ export class AudioEventBus {
     };
     this._directionalSources.add(src);
     src.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
-    void ctx.resume().then(() => src.play());
+    // Guard: if this source was removed from _worldOneShotSources before the audio context
+    // resumes (e.g. first_entry aura or death clears it synchronously before this microtask
+    // runs), skip play() entirely so the cancelled sound never starts.
+    void ctx.resume().then(() => {
+      if (this._worldOneShotSources.has(src)) src.play();
+    });
     return src;
   }
 

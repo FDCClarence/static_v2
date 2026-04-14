@@ -15,7 +15,7 @@ let tearCanvas = null;
 let tearCtx = null;
 
 /** 0.0–1.0; raised externally to intensify both layers. */
-let _intensity = 0.0;
+let _intensity = 0.5;
 
 /** Whether mount() has been called. */
 let _mounted = false;
@@ -91,16 +91,15 @@ function tickGrain(/** @type {number} */ now) {
   const baseCount = Math.floor(pixelArea / 150) + Math.floor(_intensity * 5000);
   const grainCount = isBurst ? baseCount * 3 : baseCount;
   // const alphaMax = isBurst ? 0.45 : 0.18 + _intensity * 0.14;
-  const alphaMax = isBurst ? 0.55 : 0.2 + _intensity * 0.14;
+  const alphaMax = _intensity * 0.14 + (isBurst ? 0.3 : 0.1);
 
   for (let i = 0; i < grainCount; i++) {
     const x = Math.random() * w;
     const y = Math.random() * h;
     const size = 1 + Math.random() * 3.5;
     const alpha = 0.05 + Math.random() * alphaMax;
-    // Slight green tint — found footage cameras push green.
-    const g = 180 + Math.floor(Math.random() * 75);
-    grainCtx.fillStyle = `rgba(100,${g},100,${alpha})`;
+    const v = 160 + Math.floor(Math.random() * 95);
+    grainCtx.fillStyle = `rgba(${v},${v},${v},${alpha})`;
     grainCtx.fillRect(x, y, size, size);
   }
 }
