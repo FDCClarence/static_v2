@@ -1,5 +1,5 @@
 /**
- * 2D grid input: compass heading on one axis, swipe-up to move.
+ * 2D grid input: compass heading on one axis, swipe-up forward, swipe-down backward.
  * Grid: x right, y down. Audio uses heading angle directly (no forward vector).
  */
 import { gameEvents } from './EventEmitter.js';
@@ -15,6 +15,7 @@ const EMA_FACTOR = 0.15;
 /** Degrees shifted from cardinals toward diagonals at snap boundaries (smoother diagonal intent). */
 const DIAG_SNAP_BIAS_DEG = 7;
 const SWIPE_MIN_UP_PX = 40;
+const SWIPE_MIN_DOWN_PX = 40;
 const SWIPE_MAX_HORIZONTAL_PX = 80;
 const SWIPE_MAX_MS = 400;
 const DIRECTION_ORDER = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -343,6 +344,7 @@ export class InputManager {
     this._activePointer = null;
 
     const verticalUp = start.y - e.clientY;
+    const verticalDown = e.clientY - start.y;
     const dx = e.clientX - start.x;
     const dt = performance.now() - start.t;
 
@@ -352,6 +354,18 @@ export class InputManager {
       dt < SWIPE_MAX_MS
     ) {
       this.emitter.emit('MOVE_INTENT', { facingDirection: this._snappedDirection });
+      return;
+    }
+
+    if (
+      verticalDown > SWIPE_MIN_DOWN_PX &&
+      Math.abs(dx) < SWIPE_MAX_HORIZONTAL_PX &&
+      dt < SWIPE_MAX_MS
+    ) {
+      this.emitter.emit('MOVE_INTENT', {
+        facingDirection: this._snappedDirection,
+        moveMode: 'backward',
+      });
     }
   }
 

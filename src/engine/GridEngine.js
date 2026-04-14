@@ -14,6 +14,16 @@ const DIRECTION_DELTA = {
   W: { dx: -1, dy: 0 },
   NW: { dx: -1, dy: -1 },
 };
+const OPPOSITE_DIRECTION = {
+  N: 'S',
+  NE: 'SW',
+  E: 'W',
+  SE: 'NW',
+  S: 'N',
+  SW: 'NE',
+  W: 'E',
+  NW: 'SE',
+};
 
 /**
  * @param {string} cellStr
@@ -279,8 +289,13 @@ export class GridEngine {
 
   _onMoveIntent(/** @type {unknown} */ detail) {
     if (!detail || typeof detail !== 'object') return;
-    const dir = /** @type {{ facingDirection?: string }} */ (detail).facingDirection;
-    if (typeof dir === 'string') this.move(dir);
+    const payload = /** @type {{ facingDirection?: string; moveMode?: string }} */ (detail);
+    if (typeof payload.facingDirection !== 'string') return;
+    const dir =
+      payload.moveMode === 'backward'
+        ? (OPPOSITE_DIRECTION[payload.facingDirection.toUpperCase()] ?? payload.facingDirection)
+        : payload.facingDirection;
+    this.move(dir);
   }
 
   _onFacingChanged(/** @type {unknown} */ detail) {
