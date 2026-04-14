@@ -104,6 +104,9 @@ const URLS = {
   creature: {
     default: assetUrl('creature_default.wav'),
   },
+  ambient: {
+    default: assetUrl('ambient_default.wav'),
+  },
 };
 const SFX_FILES = {
   walkingWood: 'walking-wood.mp3',
@@ -691,7 +694,7 @@ export class AudioEventBus {
     }
 
     await Promise.all(
-      Object.entries(URLS.ambient).map(async ([key, url]) => {
+      Object.entries(URLS.ambient ?? {}).map(async ([key, url]) => {
         this._ambientBuffers[key] = await decodeUrl(ctx, url);
       }),
     );
