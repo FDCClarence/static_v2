@@ -112,6 +112,8 @@ const SFX_FILES = {
   walkingWood: 'walking-wood.mp3',
   keyGrab: 'key-grab.mp3',
   keySound: 'key-sound.mp3',
+  findTheKey: 'barrack-find-the-key.wav',
+  findTheDoor: 'barrack-find-the-door-2.wav',
   doorBump: 'door-bump.mp3',
   attemptOpenLockedDoor: 'attempt-open-locked-door.mp3',
   openDoorWithKey: 'open-door-with-key.mp3',
@@ -370,6 +372,8 @@ export class AudioEventBus {
       walkingWood: null,
       keyGrab: null,
       keySound: null,
+      findTheKey: null,
+      findTheDoor: null,
       doorBump: null,
       attemptOpenLockedDoor: null,
       openDoorWithKey: null,
@@ -948,7 +952,13 @@ export class AudioEventBus {
     const regBuf = this._objectInteractBufferByTypeId.get('key');
     const sfx = regBuf ?? this._sfxBuffers.keyGrab;
     if (sfx) {
-      this._playSfx(sfx, { gain: this.getRegistrySoundGain('key', 'interact') });
+      this._playSfx(sfx, {
+        gain: this.getRegistrySoundGain('key', 'interact'),
+        onEnded: () => {
+          const prompt = this._sfxBuffers.findTheDoor;
+          if (prompt) this._playSfx(prompt, { gain: 1 });
+        },
+      });
     }
   }
 
@@ -997,6 +1007,8 @@ export class AudioEventBus {
     src.onPlaybackEnded = () => {
       this._directionalSources.delete(src);
       src.onPlaybackEnded = null;
+      const prompt = this._sfxBuffers.findTheKey;
+      if (prompt) this._playSfx(prompt, { gain: 1 });
     };
     this._directionalSources.add(src);
     src.updateDirectionalFilter(playerAudioGrid, this._headingForSpatial());
@@ -1005,7 +1017,7 @@ export class AudioEventBus {
 
   /**
    * @param {AudioBuffer} buffer
-   * @param {{ gain?: number; playbackRate?: number; swapStereo?: boolean }} [opts]
+   * @param {{ gain?: number; playbackRate?: number; swapStereo?: boolean; onEnded?: (() => void) | null }} [opts]
    */
   _playSfx(buffer, opts = {}) {
     const ctx = audioContext;
@@ -1029,6 +1041,9 @@ export class AudioEventBus {
     else gain.connect(ctx.destination);
     void ctx.resume().then(() => {
       try {
+        src.onended = () => {
+          if (typeof opts.onEnded === 'function') opts.onEnded();
+        };
         src.start();
       } catch {
         /* */
