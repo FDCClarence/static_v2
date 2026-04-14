@@ -30,6 +30,8 @@ export class GameScreen {
     this._compass = null;
     /** @type {SVGGElement | null} */
     this._compassNorthGroup = null;
+    /** @type {SVGPolygonElement | null} */
+    this._compassInnerArrow = null;
     /** @type {HTMLDivElement | null} */
     this._compassCardinal = null;
     /** @type {HTMLDivElement | null} */
@@ -41,7 +43,7 @@ export class GameScreen {
     this._onResize = this._onResize.bind(this);
     this._onDevToggle = this._onDevToggle.bind(this);
     this._onGridStateChanged = this._onGridStateChanged.bind(this);
-    this._onDeviceOrientation = this._onDeviceOrientation.bind(this);
+    this._onInputTick = this._onInputTick.bind(this);
 
     gameEvents.on('GRID_STATE_CHANGED', this._onGridStateChanged);
 
@@ -54,7 +56,19 @@ export class GameScreen {
   _onGridStateChanged(detail) {
     if (!detail || typeof detail !== 'object') return;
     const d = /** @type {Record<string, unknown>} */ (detail);
+    const ft =
+      d.forwardThreat && typeof d.forwardThreat === 'object'
+        ? /** @type {{ isUnsafe?: unknown }} */ (d.forwardThreat)
+        : null;
+    this._setCompassForwardDanger(ft?.isUnsafe === true);
     this.updateDevOverlay(d.grid, d.playerPos, d.facingDirection, d.entities);
+  }
+
+  /**
+   * @param {boolean} isDanger
+   */
+  _setCompassForwardDanger(isDanger) {
+    this._compassInnerArrow?.classList.toggle('game-screen__compass-inner-arrow--danger', isDanger);
   }
 
   render() {
@@ -174,6 +188,22 @@ export class GameScreen {
           line-height: 1.2;
           color: rgba(255, 255, 255, 0.25);
           text-transform: lowercase;
+        }
+
+        .game-screen__compass-outer-arrow {
+          fill: #fff;
+          opacity: 0.55;
+        }
+
+        .game-screen__compass-inner-arrow {
+          fill: #fff;
+          opacity: 0.55;
+          transition: fill 220ms ease, opacity 220ms ease;
+        }
+
+        .game-screen__compass-inner-arrow--danger {
+          fill: #7f1d1d;
+          opacity: 0.95;
         }
       `;
       if (IS_DEV) {
@@ -336,9 +366,15 @@ export class GameScreen {
           <svg class="game-screen__compass-svg" viewBox="0 0 260 260" width="min(100vw, 450px)" height="min(100vw, 450px)">
             <circle cx="130" cy="130" r="74" fill="none" stroke="#333" stroke-width="2"></circle>
             <circle cx="130" cy="130" r="74" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="2 6"></circle>
-            <polygon points="130,66 142,90 130,84 118,90" fill="#fff"></polygon>
+            <polygon
+              class="game-screen__compass-inner-arrow"
+              points="130,66 142,90 130,84 118,90"
+            ></polygon>
             <g id="compass-north-group">
-              <polygon points="130,16 137,36 130,32 123,36" fill="#fff" opacity="0.55"></polygon>
+              <polygon
+                class="game-screen__compass-outer-arrow"
+                points="130,16 137,36 130,32 123,36"
+              ></polygon>
             </g>
           </svg>
           <div class="game-screen__compass-readout">
@@ -358,6 +394,7 @@ export class GameScreen {
     this._devCanvas = IS_DEV ? root.querySelector('#dev-canvas') : null;
     this._compass = root.querySelector('.game-screen__compass');
     this._compassNorthGroup = root.querySelector('#compass-north-group');
+    this._compassInnerArrow = root.querySelector('.game-screen__compass-inner-arrow');
     this._compassCardinal = root.querySelector('.game-screen__compass-cardinal');
     this._compassDegrees = root.querySelector('.game-screen__compass-degrees');
 
@@ -387,29 +424,31 @@ export class GameScreen {
   }
 
   /**
-   * @param {DeviceOrientationEvent} event
+   * Smoothed game heading from {@link gameEvents} `INPUT_TICK` (same as gyro + dev A/D in InputManager).
+   * @param {number} headingDeg
    */
-  _onDeviceOrientation(event) {
-    if (typeof event.alpha !== 'number' || !Number.isFinite(event.alpha)) return;
-
-    const alpha = ((event.alpha % 360) + 360) % 360;
-    const northDeg = (360 - alpha) % 360;
-    const roundedDeg = Math.round(alpha);
+  _updateCompassFromHeading(headingDeg) {
+    if (!Number.isFinite(headingDeg)) return;
+    const h = ((headingDeg % 360) + 360) % 360;
+    // Game heading from InputManager is already 0=N, 90=E (clockwise). Do not use (360 - h); that
+    // matched raw device `alpha` in the old listener and inverts the dial vs A/D and grid facing.
+    const northDeg = h;
+    const roundedDeg = Math.round(h);
 
     let cardinal = 'N';
-    if (alpha >= 337.5 || alpha < 22.5) {
+    if (h >= 337.5 || h < 22.5) {
       cardinal = 'N';
-    } else if (alpha < 67.5) {
+    } else if (h < 67.5) {
       cardinal = 'NE';
-    } else if (alpha < 112.5) {
+    } else if (h < 112.5) {
       cardinal = 'E';
-    } else if (alpha < 157.5) {
+    } else if (h < 157.5) {
       cardinal = 'SE';
-    } else if (alpha < 202.5) {
+    } else if (h < 202.5) {
       cardinal = 'S';
-    } else if (alpha < 247.5) {
+    } else if (h < 247.5) {
       cardinal = 'SW';
-    } else if (alpha < 292.5) {
+    } else if (h < 292.5) {
       cardinal = 'W';
     } else {
       cardinal = 'NW';
@@ -418,6 +457,16 @@ export class GameScreen {
     this._compassNorthGroup?.setAttribute('transform', `rotate(${northDeg}, 130, 130)`);
     if (this._compassCardinal) this._compassCardinal.textContent = cardinal;
     if (this._compassDegrees) this._compassDegrees.textContent = `${roundedDeg}°`;
+  }
+
+  /**
+   * @param {unknown} detail
+   */
+  _onInputTick(detail) {
+    if (!detail || typeof detail !== 'object') return;
+    const heading = /** @type {{ heading?: unknown }} */ (detail).heading;
+    if (typeof heading !== 'number' || !Number.isFinite(heading)) return;
+    this._updateCompassFromHeading(heading);
   }
 
   _onDevToggle() {
@@ -477,7 +526,7 @@ export class GameScreen {
     this._ensureGameCanvasInStage();
     this._root.style.display = 'flex';
     window.addEventListener('resize', this._onResize);
-    window.addEventListener('deviceorientation', this._onDeviceOrientation);
+    gameEvents.on('INPUT_TICK', this._onInputTick);
     requestAnimationFrame(() => {
       this.syncCanvasSize();
     });
@@ -490,7 +539,7 @@ export class GameScreen {
     }
     this._root.style.display = 'none';
     window.removeEventListener('resize', this._onResize);
-    window.removeEventListener('deviceorientation', this._onDeviceOrientation);
+    gameEvents.off('INPUT_TICK', this._onInputTick);
   }
 
   /**

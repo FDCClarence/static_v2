@@ -1,3 +1,4 @@
+import { StaticOverlay } from './src/ui/StaticOverlay.js';
 import { audioEngine } from './src/audio/AudioEngine.js';
 import { audioEventBus, playerAudioGrid } from './src/audio/AudioEventBus.js';
 import './src/audio/SpatialSource.js';
@@ -18,6 +19,8 @@ import { PermissionScreen } from './src/ui/PermissionScreen.js';
 import { LandingPage } from './src/ui/LandingPage.js';
 import { GameOverScreen } from './src/ui/GameOverScreen.js';
 import { gameEvents } from './src/engine/EventEmitter.js';
+
+StaticOverlay.mount();
 
 const LEVEL_IDS = ['level_01'];
 const levelDataByIdPromise = loadAllLevelData(LEVEL_IDS);

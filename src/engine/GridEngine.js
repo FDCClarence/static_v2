@@ -266,6 +266,65 @@ export class GridEngine {
     return false;
   }
 
+  /**
+   * Diagonal wall / edge block only — same candidate order as {@link _tryDiagonalWallSlide}.
+   * @param {number} dx
+   * @param {number} dy
+   * @returns {'clear' | 'death' | null} `null` = no slide escape
+   */
+  _peekSlideOutcome(dx, dy) {
+    const px = this._playerPos.x;
+    const py = this._playerPos.y;
+    const candidates = [
+      { nx: px + dx, ny: py },
+      { nx: px, ny: py + dy },
+    ];
+    for (const { nx, ny } of candidates) {
+      if (!this._inBounds(nx, ny) || this._isWall(nx, ny)) continue;
+      const blockingObject = this._blockingObjectAt(nx, ny);
+      if (blockingObject) continue;
+      if (this._creatureAt(nx, ny)) return 'death';
+      return 'clear';
+    }
+    return null;
+  }
+
+  /**
+   * What would happen on a forward step with this delta — matches {@link move} / slide rules.
+   * @param {number} dx
+   * @param {number} dy
+   * @returns {'clear' | 'blocked' | 'death'}
+   */
+  _peekForwardMoveOutcome(dx, dy) {
+    const px = this._playerPos.x;
+    const py = this._playerPos.y;
+    const nx = px + dx;
+    const ny = py + dy;
+    const slide =
+      dx !== 0 && dy !== 0 && (!this._inBounds(nx, ny) || this._isWall(nx, ny));
+
+    if (!this._inBounds(nx, ny)) {
+      if (slide) {
+        const slid = this._peekSlideOutcome(dx, dy);
+        if (slid != null) return slid;
+      }
+      return 'blocked';
+    }
+
+    if (this._isWall(nx, ny)) {
+      if (slide) {
+        const slid = this._peekSlideOutcome(dx, dy);
+        if (slid != null) return slid;
+      }
+      return 'blocked';
+    }
+
+    const blockingObject = this._blockingObjectAt(nx, ny);
+    if (blockingObject) return 'blocked';
+    if (this._creatureAt(nx, ny)) return 'death';
+    return 'clear';
+  }
+
   interact() {
     if (!this._loaded || this._gameState === 'DEAD') return;
 
@@ -486,6 +545,11 @@ export class GridEngine {
   _emitGridStateChanged() {
     if (!this._loaded) return;
 
+    const delta = DIRECTION_DELTA[this._facingDirection] ?? DIRECTION_DELTA.N;
+    const forwardOutcome = this._peekForwardMoveOutcome(delta.dx, delta.dy);
+    const forwardBlocked = forwardOutcome === 'blocked';
+    const forwardHostile = forwardOutcome === 'death';
+
     const grid = {
       width: this._gridWidth,
       height: this._gridHeight,
@@ -506,6 +570,12 @@ export class GridEngine {
       playerPos: { ...this._playerPos },
       facingDirection: this._facingDirection,
       entities,
+      forwardThreat: {
+        isBlocked: forwardBlocked,
+        isHostile: forwardHostile,
+        isUnsafe: forwardOutcome !== 'clear',
+        isPassable: forwardOutcome === 'clear',
+      },
     });
   }
 }

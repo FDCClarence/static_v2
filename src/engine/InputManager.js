@@ -147,6 +147,14 @@ export class InputManager {
       this.emitter.emit('MOVE_INTENT', { facingDirection: this._snappedDirection });
       return;
     }
+    if (key === 's') {
+      e.preventDefault();
+      this.emitter.emit('MOVE_INTENT', {
+        facingDirection: this._snappedDirection,
+        moveMode: 'backward',
+      });
+      return;
+    }
     let delta = 0;
     if (e.key === 'ArrowLeft' || e.key === ',' || key === 'a') delta = -15;
     else if (e.key === 'ArrowRight' || e.key === '.' || key === 'd') delta = 15;

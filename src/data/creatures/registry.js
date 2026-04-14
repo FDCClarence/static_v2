@@ -8,9 +8,9 @@ export default [
     behavior: 'stalk',
     devLabel: 'STK',
     sounds: {
-      ambient_sound: 'minecraft-zombie.mp3',
-      ambient_timer: 12,
-      move_sound: 'minecraft-zombie.mp3',
+      ambient_sound: 'ghost-1.mp3',
+      ambient_timer: 20,
+      move_sound: 'stalk-breathing.wav',
     },
   },
 ];
