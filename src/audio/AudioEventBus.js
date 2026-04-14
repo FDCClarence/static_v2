@@ -344,6 +344,27 @@ export class AudioEventBus {
     /** Registry creature id → linear gain multiplier (`volume` field, default 1). */
     /** @type {Map<string, number>} */
     this._creatureVolumeByTypeId = new Map();
+    /** Registry creature id → decoded `sounds.aura_sound` buffer. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._creatureAuraSoundByTypeId = new Map();
+    /** Registry creature id → `aura_sound_distance` in tiles (Chebyshev). */
+    /** @type {Map<string, number>} */
+    this._creatureAuraDistanceByTypeId = new Map();
+    /** Registry creature id → `aura_sound_volume` gain multiplier. */
+    /** @type {Map<string, number>} */
+    this._creatureAuraVolumeByTypeId = new Map();
+    /** Instance ids of creatures currently inside their aura distance (prevents re-firing). */
+    /** @type {Set<string>} */
+    this._creatureAuraActiveIds = new Set();
+    /** Registry creature id → decoded `sounds.aura_sound_first_entry` buffer. */
+    /** @type {Map<string, AudioBuffer>} */
+    this._creatureAuraFirstEntrySoundByTypeId = new Map();
+    /** Instance ids that have already had their first-entry aura sound played (never repeats). */
+    /** @type {Set<string>} */
+    this._creatureAuraFirstEntryFiredIds = new Set();
+    /** Last known position + typeId for every live creature (updated each CREATURE_TICK). */
+    /** @type {Map<string, { x: number; y: number; creatureTypeId: string }>} */
+    this._knownCreaturePositions = new Map();
     /** @type {Record<string, AudioBuffer | null>} */
     this._sfxBuffers = {
       walkingWood: null,
@@ -683,6 +704,10 @@ export class AudioEventBus {
     this._creatureMoveSoundByTypeId.clear();
     this._creatureVolumeByTypeId.clear();
     this._creatureAmbientTimerSecByTypeId.clear();
+    this._creatureAuraSoundByTypeId.clear();
+    this._creatureAuraDistanceByTypeId.clear();
+    this._creatureAuraVolumeByTypeId.clear();
+    this._creatureAuraFirstEntrySoundByTypeId.clear();
     for (const cr of creatureRegistry) {
       if (!cr || typeof cr !== 'object') continue;
       const typeId = /** @type {{ id?: unknown; volume?: unknown; sounds?: unknown }} */ (cr).id;
@@ -708,6 +733,31 @@ export class AudioEventBus {
       if (moveRef) {
         const buf = await decodeCreatureSound(ctx, sfxBase, moveRef);
         if (buf) this._creatureMoveSoundByTypeId.set(typeId, buf);
+      }
+      const auraRef = snd && typeof snd.aura_sound === 'string' ? snd.aura_sound : null;
+      if (auraRef) {
+        const buf = await decodeCreatureSound(ctx, sfxBase, auraRef);
+        if (buf) {
+          this._creatureAuraSoundByTypeId.set(typeId, buf);
+          const distRaw = /** @type {{ aura_sound_distance?: unknown }} */ (cr).aura_sound_distance;
+          const auraDist =
+            typeof distRaw === 'number' && Number.isFinite(distRaw) && distRaw >= 0
+              ? distRaw
+              : 1;
+          this._creatureAuraDistanceByTypeId.set(typeId, auraDist);
+          const auraVolRaw = /** @type {{ aura_sound_volume?: unknown }} */ (cr).aura_sound_volume;
+          const auraVol =
+            typeof auraVolRaw === 'number' && Number.isFinite(auraVolRaw)
+              ? Math.max(0, auraVolRaw)
+              : 1;
+          this._creatureAuraVolumeByTypeId.set(typeId, auraVol);
+        }
+      }
+      const auraFirstRef =
+        snd && typeof snd.aura_sound_first_entry === 'string' ? snd.aura_sound_first_entry : null;
+      if (auraFirstRef) {
+        const buf = await decodeCreatureSound(ctx, sfxBase, auraFirstRef);
+        if (buf) this._creatureAuraFirstEntrySoundByTypeId.set(typeId, buf);
       }
     }
   }
@@ -825,6 +875,7 @@ export class AudioEventBus {
       playerAudioGrid.y = g.y;
     }
     this._syncSpatialAudio(this._headingForSpatial());
+    this._checkCreatureAuras(playerAudioGrid.x, playerAudioGrid.y);
 
     if (this._gameOverWorldMuted) return;
 
@@ -1229,7 +1280,17 @@ export class AudioEventBus {
         sg.x = item.x;
         sg.y = item.y;
       }
+
+      if (item.creatureTypeId) {
+        this._knownCreaturePositions.set(item.id, {
+          x: item.x,
+          y: item.y,
+          creatureTypeId: item.creatureTypeId,
+        });
+      }
     }
+
+    this._checkCreatureAuras(playerAudioGrid.x, playerAudioGrid.y);
 
     for (const [id, src] of this._creatureById) {
       if (!seen.has(id)) {
@@ -1240,6 +1301,39 @@ export class AudioEventBus {
     }
 
     this._refreshAllDirectional();
+  }
+
+  /**
+   * Check all tracked creatures with an aura sound against the given player tile.
+   * Plays the aura one-shot on entry into range; resets the flag on exit.
+   * @param {number} px Player grid x
+   * @param {number} py Player grid y
+   */
+  _checkCreatureAuras(px, py) {
+    if (this._deathInProgress || this._gameOverWorldMuted) return;
+    for (const [instanceId, pos] of this._knownCreaturePositions) {
+      const { creatureTypeId } = pos;
+      const auraBuf = this._creatureAuraSoundByTypeId.get(creatureTypeId);
+      if (!auraBuf) continue;
+      const auraDist = this._creatureAuraDistanceByTypeId.get(creatureTypeId) ?? 1;
+      const chebyshev = Math.max(Math.abs(pos.x - px), Math.abs(pos.y - py));
+      const inRange = chebyshev <= auraDist;
+      const wasInRange = this._creatureAuraActiveIds.has(instanceId);
+      if (inRange && !wasInRange) {
+        this._creatureAuraActiveIds.add(instanceId);
+        const auraVol = this._creatureAuraVolumeByTypeId.get(creatureTypeId) ?? 1;
+        if (!this._creatureAuraFirstEntryFiredIds.has(instanceId)) {
+          this._creatureAuraFirstEntryFiredIds.add(instanceId);
+          const firstBuf = this._creatureAuraFirstEntrySoundByTypeId.get(creatureTypeId);
+          if (firstBuf) {
+            this._playSpatialOneShot(pos.x, pos.y, firstBuf, { gain: auraVol });
+          }
+        }
+        this._playSpatialOneShot(pos.x, pos.y, auraBuf, { gain: auraVol });
+      } else if (!inRange) {
+        this._creatureAuraActiveIds.delete(instanceId);
+      }
+    }
   }
 
   _onPlayerDeath() {
@@ -1290,6 +1384,9 @@ export class AudioEventBus {
   _onStalkerIdleClear() {
     this._stalkerIdleGaspById.clear();
     this._objectTimedAmbientByInstanceId.clear();
+    this._creatureAuraActiveIds.clear();
+    this._creatureAuraFirstEntryFiredIds.clear();
+    this._knownCreaturePositions.clear();
   }
 
   /**
@@ -1374,6 +1471,9 @@ export class AudioEventBus {
     this._deathInProgress = false;
 
     this._stalkerIdleGaspById.clear();
+    this._creatureAuraActiveIds.clear();
+    this._creatureAuraFirstEntryFiredIds.clear();
+    this._knownCreaturePositions.clear();
 
     this._rampMasterGain(1, RAMP_TAIL_S);
 
@@ -1406,7 +1506,7 @@ export class AudioEventBus {
     const now = ctx.currentTime;
     gain.gain.cancelScheduledValues(now);
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.5, now + MUSIC_FADE_S);
+    gain.gain.linearRampToValueAtTime(0.4, now + MUSIC_FADE_S);
     src.connect(gain);
     if (this._masterGain) gain.connect(this._masterGain);
     else gain.connect(ctx.destination);

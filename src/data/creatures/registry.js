@@ -7,10 +7,14 @@ export default [
     hearingRadius: 6,
     behavior: 'stalk',
     devLabel: 'STK',
+    aura_sound_distance: 1,
+    aura_sound_volume: 1,
     sounds: {
       ambient_sound: 'ghost-1.mp3',
       ambient_timer: 20,
       move_sound: 'stalk-breathing.wav',
+      aura_sound: 'goosebumps.mp3',
+      aura_sound_first_entry: 'ghost-i-see-you.mp3',
     },
   },
 ];

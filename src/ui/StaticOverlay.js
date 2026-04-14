@@ -90,7 +90,8 @@ function tickGrain(/** @type {number} */ now) {
   const pixelArea = w * h;
   const baseCount = Math.floor(pixelArea / 150) + Math.floor(_intensity * 5000);
   const grainCount = isBurst ? baseCount * 3 : baseCount;
-  const alphaMax = isBurst ? 0.45 : 0.18 + _intensity * 0.14;
+  // const alphaMax = isBurst ? 0.45 : 0.18 + _intensity * 0.14;
+  const alphaMax = isBurst ? 0.55 : 0.2 + _intensity * 0.14;
 
   for (let i = 0; i < grainCount; i++) {
     const x = Math.random() * w;
