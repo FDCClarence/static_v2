@@ -26,6 +26,14 @@ export class GameScreen {
     this._devToggle = null;
     /** @type {HTMLElement | null} */
     this._devLabel = null;
+    /** @type {HTMLDivElement | null} */
+    this._compass = null;
+    /** @type {SVGGElement | null} */
+    this._compassNorthGroup = null;
+    /** @type {HTMLDivElement | null} */
+    this._compassCardinal = null;
+    /** @type {HTMLDivElement | null} */
+    this._compassDegrees = null;
 
     this._devModeOn = false;
     this._gameReparented = false;
@@ -33,6 +41,7 @@ export class GameScreen {
     this._onResize = this._onResize.bind(this);
     this._onDevToggle = this._onDevToggle.bind(this);
     this._onGridStateChanged = this._onGridStateChanged.bind(this);
+    this._onDeviceOrientation = this._onDeviceOrientation.bind(this);
 
     gameEvents.on('GRID_STATE_CHANGED', this._onGridStateChanged);
 
@@ -80,6 +89,91 @@ export class GameScreen {
           height: 100%;
           vertical-align: top;
           touch-action: none;
+        }
+
+        .game-screen__compass {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 5;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          pointer-events: none;
+          color: #fff;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+
+        .game-screen__compass-svg {
+          width: min(100vw, 450px);
+          height: min(100vw, 450px);
+          display: block;
+        }
+
+        .game-screen__compass-ring {
+          position: relative;
+          width: min(100vw, 450px);
+          height: min(100vw, 450px);
+        }
+
+        .game-screen__compass-readout {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          pointer-events: none;
+        }
+
+        .game-screen__compass-cardinal {
+          margin: 0;
+          font-size: clamp(50px, 10vw, 80px);
+          line-height: 1;
+          letter-spacing: 0.05em;
+          color: #fff;
+        }
+
+        .game-screen__compass-degrees {
+          margin-top: 6px;
+          font-size: clamp(22px, 4vw, 28px);
+          line-height: 1.2;
+          color: #666;
+        }
+
+        .game-screen__compass-arrows {
+          margin-top: 8px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+          opacity: 0.35;
+        }
+
+        .game-screen__compass-arrow-up,
+        .game-screen__compass-arrow-down {
+          width: 0;
+          height: 0;
+          border-left: 7px solid transparent;
+          border-right: 7px solid transparent;
+        }
+
+        .game-screen__compass-arrow-up {
+          border-bottom: 10px solid #fff;
+        }
+
+        .game-screen__compass-arrow-down {
+          border-top: 10px solid #fff;
+        }
+
+        .game-screen__compass-hint {
+          margin-top: 8px;
+          font-size: clamp(9px, 2vw, 11px);
+          line-height: 1.2;
+          color: rgba(255, 255, 255, 0.25);
+          text-transform: lowercase;
         }
       `;
       if (IS_DEV) {
@@ -237,10 +331,35 @@ export class GameScreen {
       <div class="game-screen__stage">
         ${devCanvasHtml}
       </div>
+      <div class="game-screen__compass" aria-hidden="true">
+        <div class="game-screen__compass-ring">
+          <svg class="game-screen__compass-svg" viewBox="0 0 260 260" width="min(100vw, 450px)" height="min(100vw, 450px)">
+            <circle cx="130" cy="130" r="74" fill="none" stroke="#333" stroke-width="2"></circle>
+            <circle cx="130" cy="130" r="74" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="2 6"></circle>
+            <polygon points="130,66 142,90 130,84 118,90" fill="#fff"></polygon>
+            <g id="compass-north-group">
+              <polygon points="130,16 137,36 130,32 123,36" fill="#fff" opacity="0.55"></polygon>
+            </g>
+          </svg>
+          <div class="game-screen__compass-readout">
+            <div class="game-screen__compass-cardinal">N</div>
+            <div class="game-screen__compass-degrees">0°</div>
+          </div>
+        </div>
+        <div class="game-screen__compass-arrows" aria-hidden="true">
+          <div class="game-screen__compass-arrow-up"></div>
+          <div class="game-screen__compass-arrow-down"></div>
+        </div>
+        <div class="game-screen__compass-hint">swipe up or down to move</div>
+      </div>
     `;
 
     this._stage = root.querySelector('.game-screen__stage');
     this._devCanvas = IS_DEV ? root.querySelector('#dev-canvas') : null;
+    this._compass = root.querySelector('.game-screen__compass');
+    this._compassNorthGroup = root.querySelector('#compass-north-group');
+    this._compassCardinal = root.querySelector('.game-screen__compass-cardinal');
+    this._compassDegrees = root.querySelector('.game-screen__compass-degrees');
 
     if (IS_DEV) {
       this._devToggle = root.querySelector('.game-screen__dev-toggle');
@@ -265,6 +384,40 @@ export class GameScreen {
 
   _onResize() {
     this.syncCanvasSize();
+  }
+
+  /**
+   * @param {DeviceOrientationEvent} event
+   */
+  _onDeviceOrientation(event) {
+    if (typeof event.alpha !== 'number' || !Number.isFinite(event.alpha)) return;
+
+    const alpha = ((event.alpha % 360) + 360) % 360;
+    const northDeg = (360 - alpha) % 360;
+    const roundedDeg = Math.round(alpha);
+
+    let cardinal = 'N';
+    if (alpha >= 337.5 || alpha < 22.5) {
+      cardinal = 'N';
+    } else if (alpha < 67.5) {
+      cardinal = 'NE';
+    } else if (alpha < 112.5) {
+      cardinal = 'E';
+    } else if (alpha < 157.5) {
+      cardinal = 'SE';
+    } else if (alpha < 202.5) {
+      cardinal = 'S';
+    } else if (alpha < 247.5) {
+      cardinal = 'SW';
+    } else if (alpha < 292.5) {
+      cardinal = 'W';
+    } else {
+      cardinal = 'NW';
+    }
+
+    this._compassNorthGroup?.setAttribute('transform', `rotate(${northDeg}, 130, 130)`);
+    if (this._compassCardinal) this._compassCardinal.textContent = cardinal;
+    if (this._compassDegrees) this._compassDegrees.textContent = `${roundedDeg}°`;
   }
 
   _onDevToggle() {
@@ -323,6 +476,7 @@ export class GameScreen {
     this._ensureGameCanvasInStage();
     this._root.style.display = 'flex';
     window.addEventListener('resize', this._onResize);
+    window.addEventListener('deviceorientation', this._onDeviceOrientation);
     requestAnimationFrame(() => {
       this.syncCanvasSize();
     });
@@ -335,6 +489,7 @@ export class GameScreen {
     }
     this._root.style.display = 'none';
     window.removeEventListener('resize', this._onResize);
+    window.removeEventListener('deviceorientation', this._onDeviceOrientation);
   }
 
   /**
